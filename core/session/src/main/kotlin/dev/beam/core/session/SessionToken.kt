@@ -64,7 +64,12 @@ data class SessionToken(
         "SessionToken(v=$version, nonce=${nonce.toHex()}, transports=$transports, device=${device.displayName})"
 
     companion object {
-        const val PROTOCOL_VERSION = 1
+        /**
+         * 2 adds relative paths, per-file digests and resume offsets to the wire format.
+         * Bumped rather than negotiated: two installs that disagree should say so plainly
+         * instead of half-understanding each other mid-transfer.
+         */
+        const val PROTOCOL_VERSION = 2
         const val NONCE_BYTES = 16
         const val SECRET_BYTES = 32
         const val NAME_PREFIX = "beam:"

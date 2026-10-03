@@ -45,11 +45,31 @@ data class FileRef(
     val name: String,
     val mimeType: String,
     val sizeBytes: Long,
+    /**
+     * Where this file sits inside the selection, so a folder arrives as a folder.
+     *
+     * For a single shared file this is just the name. For a folder it is the path below the
+     * folder the user picked - "holiday/day one/beach.jpg" - which the receiver recreates.
+     */
+    val relativePath: String = name,
 ) {
     init {
         require(name.isNotBlank()) { "File name must not be blank" }
         require(sizeBytes >= 0) { "File size must not be negative" }
     }
+
+    /**
+     * The relative path with every attempt at escaping it removed. A sender controls this
+     * string, so it is never trusted to stay inside the destination folder.
+     */
+    val safeRelativePath: String
+        get() = relativePath
+            .replace('\\', '/')
+            .split('/')
+            .map { segment -> segment.trim().takeIf { it.isNotEmpty() && it != "." && it != ".." } }
+            .filterNotNull()
+            .joinToString("/")
+            .ifBlank { safeName }
 
     /** Strips any path components a hostile sender may have smuggled into the name. */
     val safeName: String

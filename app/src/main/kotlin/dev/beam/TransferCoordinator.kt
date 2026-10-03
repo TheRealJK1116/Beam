@@ -309,6 +309,8 @@ class TransferCoordinator(
             HandshakeEvent.TransferStarted(peer, totalBytes)
         }
 
+        is TransferEvent.FileStarted -> HandshakeEvent.FileStarted(index, name, count)
+
         is TransferEvent.Progress -> HandshakeEvent.Progressed(transferredBytes)
 
         is TransferEvent.Completed -> {

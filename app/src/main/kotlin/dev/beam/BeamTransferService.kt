@@ -51,18 +51,66 @@ class BeamTransferService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        val encoded = intent?.getByteArrayExtra(EXTRA_TOKEN)
-        val token = encoded?.let { SessionTokenCodec.decode(it).getOrNull() }
-        if (token == null) {
-            stopSelf()
-            return START_NOT_STICKY
-        }
+        when (intent?.action) {
+            ACTION_SEND_GUARD -> {
+                // The sending activity can be backgrounded or the screen locked mid-transfer;
+                // the transfer itself lives in TransferCoordinator at application scope, so
+                // this exists purely to keep the process alive and the radios awake.
+                startAsForeground(sendingNotification())
+                acquireLocks()
+                observeState()
+            }
 
-        startAsForeground(waitingNotification())
-        beginReceiving(token)
-        observeState()
+            else -> {
+                val encoded = intent?.getByteArrayExtra(EXTRA_TOKEN)
+                val token = encoded?.let { SessionTokenCodec.decode(it).getOrNull() }
+                if (token == null) {
+                    stopSelf()
+                    return START_NOT_STICKY
+                }
+                startAsForeground(waitingNotification())
+                acquireLocks()
+                beginReceiving(token)
+                observeState()
+            }
+        }
         return START_NOT_STICKY
     }
+
+    private var wakeLock: android.os.PowerManager.WakeLock? = null
+    private var wifiLock: android.net.wifi.WifiManager.WifiLock? = null
+
+    /**
+     * A multi-gigabyte transfer outlasts the screen timeout. Without these the CPU sleeps and
+     * the Wi-Fi chip powers down mid-stream, which the peer sees as the connection dying.
+     */
+    private fun acquireLocks() {
+        if (wakeLock != null) return
+        runCatching {
+            val power = getSystemService(android.os.PowerManager::class.java)
+            wakeLock = power?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "beam:transfer")
+                ?.apply { acquire(MAX_TRANSFER_MILLIS) }
+
+            val wifi = applicationContext.getSystemService(android.net.wifi.WifiManager::class.java)
+            wifiLock = wifi?.createWifiLock(
+                android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY,
+                "beam:transfer",
+            )?.apply { acquire() }
+        }
+    }
+
+    private fun releaseLocks() {
+        runCatching { wakeLock?.takeIf { it.isHeld }?.release() }
+        runCatching { wifiLock?.takeIf { it.isHeld }?.release() }
+        wakeLock = null
+        wifiLock = null
+    }
+
+    private fun sendingNotification(): Notification =
+        baseNotification()
+            .setContentTitle(getString(R.string.notif_sending_title))
+            .setProgress(0, 0, true)
+            .build()
 
     private fun beginReceiving(token: SessionToken) {
         val autoAcceptEnabled = container.settingsSnapshot.value.autoAcceptKnownDevices
@@ -99,6 +147,7 @@ class BeamTransferService : Service() {
     }
 
     private fun finish() {
+        releaseLocks()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
@@ -120,11 +169,30 @@ class BeamTransferService : Service() {
             .setProgress(0, 0, true)
             .build()
 
-    private fun transferNotification(state: HandshakeState.Transferring): Notification =
-        baseNotification()
-            .setContentTitle(getString(R.string.notif_receiving_title, state.peer.displayName))
+    private fun transferNotification(state: HandshakeState.Transferring): Notification {
+        val title = if (state.role == dev.beam.core.session.Role.SENDER) {
+            getString(R.string.notif_sending_to_title, state.peer.displayName)
+        } else {
+            getString(R.string.notif_receiving_title, state.peer.displayName)
+        }
+        return baseNotification()
+            .setContentTitle(title)
+            // "3 of 12 · holiday/beach.jpg" while a folder is moving.
+            .setContentText(
+                if (state.fileCount > 1) {
+                    getString(
+                        R.string.notif_file_of,
+                        state.fileIndex + 1,
+                        state.fileCount,
+                        state.fileName.orEmpty(),
+                    )
+                } else {
+                    state.fileName
+                }
+            )
             .setProgress(100, (state.fraction * 100).toInt(), state.totalBytes <= 0)
             .build()
+    }
 
     private fun baseNotification(): NotificationCompat.Builder =
         NotificationCompat.Builder(this, CHANNEL_TRANSFER)
@@ -188,12 +256,17 @@ class BeamTransferService : Service() {
     }
 
     override fun onDestroy() {
+        releaseLocks()
         scope.cancel()
         super.onDestroy()
     }
 
     companion object {
         private const val EXTRA_TOKEN = "dev.beam.extra.TOKEN"
+        private const val ACTION_SEND_GUARD = "dev.beam.action.SEND_GUARD"
+
+        /** Upper bound on a single beam; the lock is released on completion long before this. */
+        private const val MAX_TRANSFER_MILLIS = 30L * 60L * 1000L
         private const val ID_PROGRESS = 1001
         private const val ID_RESULT = 1002
         private const val ID_SETUP = 1003
@@ -205,6 +278,15 @@ class BeamTransferService : Service() {
          * Called from the HCE service's binder thread the instant the phones touch. Fire and
          * forget: the token is already on its way back over NFC.
          */
+        /**
+         * Called when a send begins, so the transfer survives the user leaving the screen or
+         * the phone locking. The service holds no state of its own; it guards the process.
+         */
+        fun startSending(context: Context) {
+            val intent = Intent(context, BeamTransferService::class.java).setAction(ACTION_SEND_GUARD)
+            runCatching { context.startForegroundService(intent) }
+        }
+
         fun startReceiving(context: Context, token: SessionToken) {
             val intent = Intent(context, BeamTransferService::class.java)
                 .putExtra(EXTRA_TOKEN, SessionTokenCodec.encode(token))

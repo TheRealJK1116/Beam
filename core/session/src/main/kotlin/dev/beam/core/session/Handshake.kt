@@ -41,6 +41,10 @@ sealed interface HandshakeState {
         val peer: DeviceInfo,
         val transferredBytes: Long,
         val totalBytes: Long,
+        /** Which file of how many, for a folder or multi-file beam. Zero-based. */
+        val fileIndex: Int = 0,
+        val fileCount: Int = 1,
+        val fileName: String? = null,
     ) : HandshakeState {
         val fraction: Float
             get() = if (totalBytes <= 0) 0f else (transferredBytes.toDouble() / totalBytes).toFloat().coerceIn(0f, 1f)
@@ -75,6 +79,9 @@ sealed interface HandshakeEvent {
 
     data class TransferStarted(val peer: DeviceInfo, val totalBytes: Long) : HandshakeEvent
     data class Progressed(val transferredBytes: Long) : HandshakeEvent
+
+    /** A new file within the same transfer started moving. */
+    data class FileStarted(val index: Int, val name: String, val count: Int) : HandshakeEvent
     data class Finished(val durationMillis: Long) : HandshakeEvent
 
     data class Failed(val error: TransferError) : HandshakeEvent
@@ -182,6 +189,15 @@ object HandshakeReducer {
                 transferredBytes = 0,
                 totalBytes = event.totalBytes,
             )
+
+            is HandshakeEvent.FileStarted -> when (state) {
+                is HandshakeState.Transferring -> state.copy(
+                    fileIndex = event.index,
+                    fileCount = event.count,
+                    fileName = event.name,
+                )
+                else -> state
+            }
 
             is HandshakeEvent.Progressed -> when (state) {
                 is HandshakeState.Transferring -> state.copy(

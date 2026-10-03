@@ -205,26 +205,50 @@ class WifiDirectTransport(
                 BeamFrames.DONE -> break
 
                 BeamFrames.FILE_HEADER -> {
-                    val (index, size) = BeamFrames.parseFileHeader(frame.body)
+                    val header = BeamFrames.parseFileHeader(frame.body)
                         ?: throw IllegalStateException("bad file header")
-                    val entry = manifest.files.getOrNull(index)
-                        ?: throw IllegalStateException("file $index is not in the manifest")
+                    val entry = manifest.files.getOrNull(header.index)
+                        ?: throw IllegalStateException("file ${header.index} is not in the manifest")
+
+                    emit(TransferEvent.FileStarted(header.index, entry.name, manifest.files.size))
 
                     val destination = sink.create(entry)
                     val alreadyDone = completedBytes
+                    val digest = BeamFrames.sha256()
+
                     val ok = runCatching {
                         destination.stream.use { out ->
-                            BeamFrames.copyExactly(input, out, size) { moved ->
-                                emitProgress(TransferEvent.Progress(alreadyDone + moved, manifest.totalBytes))
-                            }
+                            BeamFrames.copyExactly(
+                                input = input,
+                                output = out,
+                                count = header.remaining,
+                                digest = digest,
+                                onProgress = { moved ->
+                                    // Throttled: a gigabyte at 64 KB a time is 16k callbacks.
+                                    emitProgress(TransferEvent.Progress(alreadyDone + moved, manifest.totalBytes))
+                                },
+                            )
                         }
                     }
                     if (ok.isFailure) {
                         destination.discard()
                         throw ok.exceptionOrNull()!!
                     }
+
+                    // The sender's digest of the whole file follows the body.
+                    val trailer = BeamFrames.read(input)
+                    if (trailer?.type != BeamFrames.FILE_DIGEST) {
+                        destination.discard()
+                        throw IllegalStateException("no digest followed ${entry.name}")
+                    }
+                    if (!trailer.body.contentEquals(digest.digest())) {
+                        destination.discard()
+                        emit(TransferEvent.Failed(TransferError.IntegrityFailed(entry.name)))
+                        return
+                    }
+
                     received += destination.commit()
-                    completedBytes += size
+                    completedBytes += header.sizeBytes
                     emit(TransferEvent.Progress(completedBytes, manifest.totalBytes))
                 }
 
@@ -357,13 +381,26 @@ class WifiDirectTransport(
         if (payload is BeamPayload.Files) {
             payload.files.forEachIndexed { index, ref ->
                 val entry = manifest.files[index]
+                emit(TransferEvent.FileStarted(index, entry.name, payload.files.size))
+
                 BeamFrames.write(output, BeamFrames.FILE_HEADER, BeamFrames.fileHeader(index, entry.sizeBytes))
+
                 val alreadySent = sent
+                val digest = BeamFrames.sha256()
                 source.open(ref).use { fileStream ->
-                    BeamFrames.copyExactly(fileStream, output, entry.sizeBytes) { moved ->
-                        emitProgress(TransferEvent.Progress(alreadySent + moved, manifest.totalBytes))
-                    }
+                    BeamFrames.copyExactly(
+                        input = fileStream,
+                        output = output,
+                        count = entry.sizeBytes,
+                        digest = digest,
+                        onProgress = { moved ->
+                            emitProgress(TransferEvent.Progress(alreadySent + moved, manifest.totalBytes))
+                        },
+                    )
                 }
+                // Digested on the way past, so the file is never read twice.
+                BeamFrames.write(output, BeamFrames.FILE_DIGEST, digest.digest())
+
                 sent += entry.sizeBytes
                 emit(TransferEvent.Progress(sent, manifest.totalBytes))
             }

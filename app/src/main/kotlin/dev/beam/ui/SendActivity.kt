@@ -162,6 +162,8 @@ class SendActivity : ComponentActivity() {
                     is TapResult.Success -> {
                         val toSend = payload.value ?: return@collect
                         if (!container.coordinator.isBusy) {
+                            // Guard the process first: a large beam outlives this screen.
+                            dev.beam.BeamTransferService.startSending(this@SendActivity)
                             container.coordinator.beginSend(result.token, toSend)
                         }
                     }

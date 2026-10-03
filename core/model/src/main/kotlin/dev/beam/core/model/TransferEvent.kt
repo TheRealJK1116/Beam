@@ -15,6 +15,9 @@ sealed interface TransferEvent {
      */
     data class ManifestOffered(val manifest: PayloadManifest, val peer: DeviceInfo) : TransferEvent
 
+    /** A new file in a multi-file transfer has begun, so the UI can name what is moving. */
+    data class FileStarted(val index: Int, val name: String, val count: Int) : TransferEvent
+
     /** Both sides agreed; bytes are about to move. */
     data class Started(val totalBytes: Long, val peer: DeviceInfo) : TransferEvent
 
@@ -55,4 +58,9 @@ sealed interface TransferError {
     data class Rejected(override val message: String = "The other device declined") : TransferError
     data class Cancelled(override val message: String = "Transfer cancelled") : TransferError
     data class Io(override val message: String) : TransferError
+
+    /** The bytes arrived but did not hash to what the sender said they would. */
+    data class IntegrityFailed(val fileName: String) : TransferError {
+        override val message: String = "$fileName arrived damaged and was discarded"
+    }
 }

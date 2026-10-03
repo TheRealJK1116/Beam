@@ -26,7 +26,18 @@ data class PayloadManifest(
         val name: String,
         val mimeType: String,
         val sizeBytes: Long,
-    )
+        /** Path within the selection, so folder structure survives the trip. */
+        val relativePath: String = name,
+    ) {
+        /** Sanitised on the receiving side; a sender must not be able to escape the folder. */
+        val safePath: String
+            get() = relativePath
+                .replace('\\', '/')
+                .split('/')
+                .mapNotNull { segment -> segment.trim().takeIf { it.isNotEmpty() && it != "." && it != ".." } }
+                .joinToString("/")
+                .ifBlank { name.substringAfterLast('/').ifBlank { "beam_file" } }
+    }
 
     val totalBytes: Long
         get() = when (kind) {
@@ -50,7 +61,9 @@ data class PayloadManifest(
             is BeamPayload.Url -> PayloadManifest(Kind.URL, text = payload.url)
             is BeamPayload.Files -> PayloadManifest(
                 kind = Kind.FILES,
-                files = payload.files.map { Entry(it.safeName, it.mimeType, it.sizeBytes) },
+                files = payload.files.map {
+                    Entry(it.safeName, it.mimeType, it.sizeBytes, it.safeRelativePath)
+                },
             )
         }
 
@@ -83,7 +96,15 @@ data class PayloadManifest(
         Kind.TEXT -> BeamPayload.Text(text.orEmpty())
         Kind.URL -> BeamPayload.Url(text.orEmpty())
         Kind.FILES -> BeamPayload.Files(
-            files.map { FileRef(uri = "", name = it.name, mimeType = it.mimeType, sizeBytes = it.sizeBytes) }
+            files.map {
+                FileRef(
+                    uri = "",
+                    name = it.name,
+                    mimeType = it.mimeType,
+                    sizeBytes = it.sizeBytes,
+                    relativePath = it.safePath,
+                )
+            }
         )
     }
 }

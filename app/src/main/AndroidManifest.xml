@@ -74,6 +74,13 @@
     -->
     <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
 
+    <!--
+      A multi-gigabyte beam outlasts the screen timeout. Without a partial wake lock the CPU
+      sleeps and the Wi-Fi chip powers down mid-stream, which the other phone sees as the
+      connection dying.
+    -->
+    <uses-permission android:name="android.permission.WAKE_LOCK" />
+
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />

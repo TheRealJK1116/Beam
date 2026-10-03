@@ -197,6 +197,7 @@ private fun TransferEvent.describe(): String = when (this) {
     TransferEvent.Discovering -> "discovering"
     TransferEvent.Connecting -> "connecting"
     is TransferEvent.ManifestOffered -> "manifest offered (${manifest.totalBytes} B)"
+    is TransferEvent.FileStarted -> "file ${index + 1} of $count: $name"
     is TransferEvent.Started -> "started, ${totalBytes} B from ${peer.displayName}"
     is TransferEvent.Progress -> "progress ${(fraction * 100).toInt()}%"
     is TransferEvent.Completed -> "completed in ${durationMillis} ms"

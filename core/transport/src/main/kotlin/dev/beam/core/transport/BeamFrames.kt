@@ -46,6 +46,23 @@ object BeamFrames {
      */
     const val RECEIVED: Byte = 0x09
 
+    /**
+     * Sender to receiver, after a file body: the SHA-256 of what was just sent.
+     *
+     * Sent as a trailer rather than declared in the manifest so that neither side has to read
+     * the file twice - both digest as the bytes stream past, and compare at the end. A
+     * mismatch means the file is discarded rather than quietly saved corrupted.
+     */
+    const val FILE_DIGEST: Byte = 0x0A
+
+    /**
+     * Receiver to sender, after accepting: how much of each file it already holds from an
+     * interrupted attempt, so the sender can skip ahead instead of starting over.
+     */
+    const val RESUME_OFFER: Byte = 0x0B
+
+    const val DIGEST_BYTES = 32
+
     /** SHA-256: the fixed-size prefix of an AUTH frame, followed by the sender's stable id. */
     const val PROOF_BYTES = 32
 
@@ -132,28 +149,66 @@ object BeamFrames {
     private fun String.sanitizedName(): String =
         filter { !it.isISOControl() }.trim().take(32)
 
-    /** Four bytes of index, eight of size — packed by hand so the body is exactly 12 bytes. */
-    fun fileHeader(index: Int, sizeBytes: Long): ByteArray {
-        val body = ByteArray(12)
-        body[0] = (index ushr 24).toByte()
-        body[1] = (index ushr 16).toByte()
-        body[2] = (index ushr 8).toByte()
-        body[3] = index.toByte()
-        for (i in 0 until 8) {
-            body[4 + i] = (sizeBytes ushr (56 - 8 * i)).toByte()
-        }
+    /**
+     * Index, total size, and the offset this run starts from — 20 bytes, packed by hand.
+     * [offset] is non-zero only when resuming a file the receiver already partly holds.
+     */
+    data class FileHeader(val index: Int, val sizeBytes: Long, val offset: Long) {
+        val remaining: Long get() = sizeBytes - offset
+    }
+
+    fun fileHeader(index: Int, sizeBytes: Long, offset: Long = 0L): ByteArray {
+        val body = ByteArray(20)
+        for (i in 0 until 4) body[i] = (index ushr (24 - 8 * i)).toByte()
+        for (i in 0 until 8) body[4 + i] = (sizeBytes ushr (56 - 8 * i)).toByte()
+        for (i in 0 until 8) body[12 + i] = (offset ushr (56 - 8 * i)).toByte()
         return body
     }
 
-    /** Returns index to size, or null if the header is malformed. */
-    fun parseFileHeader(body: ByteArray): Pair<Int, Long>? {
-        if (body.size != 12) return null
+    /** Returns the header, or null if it is malformed or self-contradictory. */
+    fun parseFileHeader(body: ByteArray): FileHeader? {
+        if (body.size != 20) return null
         var index = 0
         for (i in 0 until 4) index = (index shl 8) or (body[i].toInt() and 0xFF)
         var size = 0L
         for (i in 4 until 12) size = (size shl 8) or (body[i].toLong() and 0xFF)
-        if (size < 0) return null
-        return index to size
+        var offset = 0L
+        for (i in 12 until 20) offset = (offset shl 8) or (body[i].toLong() and 0xFF)
+
+        if (index < 0 || size < 0 || offset < 0 || offset > size) return null
+        return FileHeader(index, size, offset)
+    }
+
+    /** `count ‖ (index, bytesHeld)*` — what the receiver already has of each file. */
+    fun resumeOffer(held: Map<Int, Long>): ByteArray {
+        val body = ByteArray(4 + held.size * 12)
+        for (i in 0 until 4) body[i] = (held.size ushr (24 - 8 * i)).toByte()
+        var at = 4
+        held.forEach { (index, bytes) ->
+            for (i in 0 until 4) body[at + i] = (index ushr (24 - 8 * i)).toByte()
+            for (i in 0 until 8) body[at + 4 + i] = (bytes ushr (56 - 8 * i)).toByte()
+            at += 12
+        }
+        return body
+    }
+
+    fun parseResumeOffer(body: ByteArray): Map<Int, Long> {
+        if (body.size < 4) return emptyMap()
+        var count = 0
+        for (i in 0 until 4) count = (count shl 8) or (body[i].toInt() and 0xFF)
+        if (count < 0 || 4 + count * 12 > body.size) return emptyMap()
+
+        val held = mutableMapOf<Int, Long>()
+        var at = 4
+        repeat(count) {
+            var index = 0
+            for (i in 0 until 4) index = (index shl 8) or (body[at + i].toInt() and 0xFF)
+            var bytes = 0L
+            for (i in 0 until 8) bytes = (bytes shl 8) or (body[at + 4 + i].toLong() and 0xFF)
+            if (index >= 0 && bytes > 0) held[index] = bytes
+            at += 12
+        }
+        return held
     }
 
     /**
@@ -166,18 +221,37 @@ object BeamFrames {
         output: OutputStream,
         count: Long,
         bufferSize: Int = 64 * 1024,
+        digest: java.security.MessageDigest? = null,
         onProgress: (Long) -> Unit = {},
     ) {
+        val buffer = ByteArray(bufferSize)
+        var remaining = count
+        // Progress is reported per buffer, which at gigabyte scale is tens of thousands of
+        // callbacks; the caller throttles rather than this allocating anything per chunk.
+        while (remaining > 0) {
+            val wanted = minOf(remaining, buffer.size.toLong()).toInt()
+            val read = input.read(buffer, 0, wanted)
+            if (read < 0) throw EOFException("stream ended with $remaining bytes still expected")
+            output.write(buffer, 0, read)
+            digest?.update(buffer, 0, read)
+            remaining -= read
+            onProgress(count - remaining)
+        }
+        output.flush()
+    }
+
+    /** Reads [count] bytes into the digest and discards them — used to re-hash a resumed file. */
+    fun digestExactly(input: InputStream, count: Long, digest: java.security.MessageDigest, bufferSize: Int = 64 * 1024) {
         val buffer = ByteArray(bufferSize)
         var remaining = count
         while (remaining > 0) {
             val wanted = minOf(remaining, buffer.size.toLong()).toInt()
             val read = input.read(buffer, 0, wanted)
             if (read < 0) throw EOFException("stream ended with $remaining bytes still expected")
-            output.write(buffer, 0, read)
+            digest.update(buffer, 0, read)
             remaining -= read
-            onProgress(count - remaining)
         }
-        output.flush()
     }
+
+    fun sha256(): java.security.MessageDigest = java.security.MessageDigest.getInstance("SHA-256")
 }

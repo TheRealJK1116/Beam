@@ -83,14 +83,73 @@ class BeamFramesTest {
     fun `file headers round trip, including large files and high indices`() {
         listOf(0 to 0L, 1 to 4_194_304L, 255 to 10_737_418_240L, 70_000 to 1L).forEach { (index, size) ->
             assertThat(BeamFrames.parseFileHeader(BeamFrames.fileHeader(index, size)))
-                .isEqualTo(index to size)
+                .isEqualTo(BeamFrames.FileHeader(index, size, 0L))
         }
+    }
+
+    @Test
+    fun `a resume offset round trips and reports what is left`() {
+        val header = BeamFrames.parseFileHeader(
+            BeamFrames.fileHeader(index = 3, sizeBytes = 10_737_418_240L, offset = 4_294_967_296L)
+        )!!
+        assertThat(header.index).isEqualTo(3)
+        assertThat(header.offset).isEqualTo(4_294_967_296L)
+        assertThat(header.remaining).isEqualTo(10_737_418_240L - 4_294_967_296L)
     }
 
     @Test
     fun `a malformed file header is rejected`() {
         assertThat(BeamFrames.parseFileHeader(ByteArray(4))).isNull()
         assertThat(BeamFrames.parseFileHeader(ByteArray(13))).isNull()
+    }
+
+    @Test
+    fun `a header claiming to resume past the end of its own file is rejected`() {
+        val nonsense = BeamFrames.fileHeader(index = 0, sizeBytes = 100, offset = 500)
+        assertThat(BeamFrames.parseFileHeader(nonsense)).isNull()
+    }
+
+    @Test
+    fun `a resume offer round trips`() {
+        val held = mapOf(0 to 1_024L, 4 to 9_000_000_000L)
+        assertThat(BeamFrames.parseResumeOffer(BeamFrames.resumeOffer(held))).isEqualTo(held)
+    }
+
+    @Test
+    fun `an empty or truncated resume offer yields nothing rather than throwing`() {
+        assertThat(BeamFrames.parseResumeOffer(BeamFrames.resumeOffer(emptyMap()))).isEmpty()
+        assertThat(BeamFrames.parseResumeOffer(ByteArray(2))).isEmpty()
+        // Claims four entries, carries none.
+        assertThat(BeamFrames.parseResumeOffer(byteArrayOf(0, 0, 0, 4))).isEmpty()
+    }
+
+    @Test
+    fun `copyExactly digests exactly the bytes it moved`() {
+        val bytes = ByteArray(5_000) { (it % 97).toByte() }
+        val digest = BeamFrames.sha256()
+        BeamFrames.copyExactly(ByteArrayInputStream(bytes), ByteArrayOutputStream(), 5_000, digest = digest)
+
+        val expected = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+        assertThat(digest.digest()).isEqualTo(expected)
+    }
+
+    @Test
+    fun `a digest over a resumed file matches one taken in a single pass`() {
+        val bytes = ByteArray(4_096) { (it % 251).toByte() }
+
+        // Interrupted at 1500 bytes, then resumed: re-hash the part already held, then
+        // continue over the rest.
+        val resumed = BeamFrames.sha256()
+        BeamFrames.digestExactly(ByteArrayInputStream(bytes.copyOfRange(0, 1_500)), 1_500, resumed)
+        BeamFrames.copyExactly(
+            ByteArrayInputStream(bytes.copyOfRange(1_500, bytes.size)),
+            ByteArrayOutputStream(),
+            (bytes.size - 1_500).toLong(),
+            digest = resumed,
+        )
+
+        val single = java.security.MessageDigest.getInstance("SHA-256").digest(bytes)
+        assertThat(resumed.digest()).isEqualTo(single)
     }
 
     @Test

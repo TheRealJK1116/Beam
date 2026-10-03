@@ -41,13 +41,24 @@ class AndroidPayloadSink(context: Context) : PayloadSink {
 
     override suspend fun create(entry: PayloadManifest.Entry): PayloadSink.Destination =
         withContext(Dispatchers.IO) {
-            val name = entry.name.substringAfterLast('/').substringAfterLast('\\').ifBlank { "beam_file" }
+            // safePath has already had any "..", absolute roots and empty segments removed.
+            val path = entry.safePath
+            val name = path.substringAfterLast('/')
+            val subFolder = path.substringBeforeLast('/', missingDelimiterValue = "")
             val collection = collectionFor(entry.mimeType)
 
             val values = ContentValues().apply {
                 put(MediaStore.MediaColumns.DISPLAY_NAME, name)
                 put(MediaStore.MediaColumns.MIME_TYPE, entry.mimeType.ifBlank { "application/octet-stream" })
-                put(MediaStore.MediaColumns.RELATIVE_PATH, relativePathFor(entry.mimeType))
+                // A folder arrives as a folder: its structure below the Beam directory is
+                // recreated rather than flattened into a heap of loose files.
+                put(
+                    MediaStore.MediaColumns.RELATIVE_PATH,
+                    buildString {
+                        append(relativePathFor(entry.mimeType))
+                        if (subFolder.isNotEmpty()) append('/').append(subFolder)
+                    },
+                )
                 // Hidden from the gallery until commit(), so a failed transfer never surfaces.
                 put(MediaStore.MediaColumns.IS_PENDING, 1)
             }
