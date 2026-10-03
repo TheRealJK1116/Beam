@@ -27,4 +27,6 @@ object BeamDebug {
     suspend fun runScenario(scenario: Scenario, log: (String) -> Unit): Long = 0
 
     fun simulateIncomingTap(context: Context, container: BeamContainer): Boolean = false
+
+    fun setSimulationEnabled(enabled: Boolean) = Unit
 }

@@ -88,7 +88,12 @@ class BeamContainer(private val context: Context) {
     fun warmUp() {
         scope.launch {
             settings.ensureStableId()
-            settings.state.collect { _settingsSnapshot.value = it }
+            settings.state.collect {
+                _settingsSnapshot.value = it
+                // Debug builds only; a no-op in release.
+                BeamDebug.setSimulationEnabled(it.simulationEnabled)
+                refreshTransportAvailability()
+            }
         }
         scope.launch { refreshTransportAvailability() }
     }

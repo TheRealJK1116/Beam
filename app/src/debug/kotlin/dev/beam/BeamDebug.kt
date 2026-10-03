@@ -36,7 +36,19 @@ object BeamDebug {
     /** Shared so both ends of a loopback beam find each other. */
     val ether = FakeEther()
 
-    val fakeTransport = FakeTransport(ether)
+    /**
+     * Unavailable unless the Dev screen's simulation switch is on.
+     *
+     * An available transport is offered to the other phone inside the session token and joins
+     * the fallback chain, so a simulator left switched on would advertise a loopback that no
+     * other device can ever reach, and would be "fallen back" to after the real radios failed.
+     */
+    val fakeTransport = FakeTransport(ether, FakeTransportConfig(available = false))
+
+    /** Driven by the simulation setting, which only exists in debug builds. */
+    fun setSimulationEnabled(enabled: Boolean) {
+        fakeTransport.configure { it.copy(available = enabled) }
+    }
 
     fun extraTransports(context: Context): List<Transport> = listOf(fakeTransport)
 
