@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Beam's HCE registration.
+
+  requireDeviceUnlock="true": a tap mints a session and starts advertising, so it stays behind
+  the lock screen rather than letting a stranger's phone provoke a locked one.
+  requireDeviceScreenOn is left at its default for the same reason - a beam needs a person.
+-->
+<host-apdu-service xmlns:android="http://schemas.android.com/apk/res/android"
+    android:description="@string/beam_hce_description"
+    android:requireDeviceUnlock="true">
+
+    <aid-group
+        android:category="other"
+        android:description="@string/beam_hce_description">
+        <aid-filter android:name="F04265616D01" />
+    </aid-group>
+</host-apdu-service>

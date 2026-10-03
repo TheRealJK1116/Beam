@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">Beam</string>
+
+    <!-- Send -->
+    <string name="send_tap_title">Touch the phones</string>
+    <string name="send_tap_subtitle">Hold them back to back until you feel a buzz</string>
+    <string name="send_connecting_title">Connecting…</string>
+    <string name="send_verifying_title">Checking it is the right phone…</string>
+    <string name="send_waiting_title">Waiting for them to accept…</string>
+    <string name="send_sending_title">Sending</string>
+    <string name="send_done_title">Sent</string>
+    <string name="send_done_subtitle">Delivered to %1$s</string>
+    <string name="send_failed_subtitle">Try tapping the phones again</string>
+    <string name="send_nothing_title">Nothing to send</string>
+    <string name="send_nfc_off_title">Turn on NFC to beam</string>
+
+    <!-- Receive -->
+    <string name="receive_waiting_title">Incoming beam…</string>
+    <string name="receive_offer_title">%1$s wants to send you something</string>
+    <string name="receive_receiving_title">Receiving</string>
+    <string name="receive_done_title">Received</string>
+    <string name="receive_done_subtitle">Saved to your Beam folder</string>
+
+    <!-- Home and settings -->
+    <string name="home_empty_title">Nothing beamed yet</string>
+    <string name="home_empty_subtitle">Share something and pick Beam, then touch two phones together.</string>
+    <string name="title_settings">Settings</string>
+    <string name="setting_receiving">Receiving</string>
+    <string name="setting_receiving_sub">Let other phones beam to this one by tapping it</string>
+    <string name="setting_auto_accept">Auto-accept known devices</string>
+    <string name="setting_auto_accept_sub">Skip the confirmation for phones you have accepted before</string>
+    <string name="setting_device_name">Device name</string>
+    <string name="setting_clear_history">Clear history</string>
+    <string name="setting_developer">Developer tools</string>
+
+    <!-- Actions -->
+    <string name="action_accept">Accept</string>
+    <string name="action_decline">Decline</string>
+    <string name="action_cancel">Cancel</string>
+    <string name="action_close">Close</string>
+    <string name="action_back">Back</string>
+    <string name="action_save">Save</string>
+
+    <!-- Notifications -->
+    <string name="channel_transfer">Transfers</string>
+    <string name="channel_incoming">Incoming beams</string>
+    <string name="notif_incoming_title">Ready to receive</string>
+    <string name="notif_incoming_text">Waiting for the other phone…</string>
+    <string name="notif_receiving_title">Receiving from %1$s</string>
+    <string name="notif_offer_title">%1$s wants to send you something</string>
+    <string name="notif_received_title">Beam received</string>
+
+    <string name="share_target_label">Beam to a nearby phone</string>
+</resources>
