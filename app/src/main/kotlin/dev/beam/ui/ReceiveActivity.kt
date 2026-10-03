@@ -177,9 +177,23 @@ private fun ReceiveScreen(
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(
-                        "${(state.fraction * 100).toInt()}% · ${state.peer.displayName}",
+                        buildString {
+                            append((state.fraction * 100).toInt()).append("% · ")
+                            if (state.fileCount > 1) {
+                                append(
+                                    stringResource(
+                                        R.string.progress_file_of,
+                                        state.fileIndex + 1,
+                                        state.fileCount,
+                                    )
+                                )
+                                append(" · ")
+                            }
+                            append(state.fileName ?: state.peer.displayName)
+                        },
                         style = MaterialTheme.typography.bodyLarge,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
                     )
                 }
 

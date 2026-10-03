@@ -350,8 +350,15 @@ private fun HandshakeState.subtitle(payload: BeamPayload?, nothingToSend: Boolea
     nothingToSend -> stringResource(R.string.send_nothing_subtitle)
     else -> when (this) {
         HandshakeState.Idle, is HandshakeState.AwaitingTap -> stringResource(R.string.send_tap_subtitle)
-        is HandshakeState.Transferring ->
-            "${(fraction * 100).toInt()}% · ${peer.displayName}"
+        is HandshakeState.Transferring -> buildString {
+            append((fraction * 100).toInt()).append("% · ")
+            // A folder says which file of how many; a single file just names the peer.
+            if (fileCount > 1) {
+                append(stringResource(R.string.progress_file_of, fileIndex + 1, fileCount))
+                append(" · ")
+            }
+            append(fileName ?: peer.displayName)
+        }
         is HandshakeState.Complete -> stringResource(R.string.send_done_subtitle, peer.displayName)
         is HandshakeState.Failed -> stringResource(R.string.send_failed_subtitle)
         else -> payload?.label.orEmpty()

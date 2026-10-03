@@ -7,6 +7,7 @@ import android.provider.OpenableColumns
 import android.util.Patterns
 import android.webkit.MimeTypeMap
 import androidx.core.content.IntentCompat
+import androidx.documentfile.provider.DocumentFile
 import dev.beam.core.model.BeamPayload
 import dev.beam.core.model.FileRef
 import kotlinx.coroutines.Dispatchers
@@ -21,13 +22,64 @@ import kotlinx.coroutines.withContext
  */
 object IntentPayloads {
 
+    /**
+     * Beam's own extra for "send this whole folder".
+     *
+     * A folder is not passed as a list of URIs: a few hundred files would overflow the binder
+     * transaction. The tree URI travels instead and is walked here, off the main thread.
+     */
+    const val EXTRA_TREE_URI = "dev.beam.extra.TREE_URI"
+
     suspend fun from(context: Context, intent: Intent): BeamPayload? = withContext(Dispatchers.IO) {
+        val tree = intent.getStringExtra(EXTRA_TREE_URI)
+        if (tree != null) return@withContext folder(context, Uri.parse(tree))
+
         when (intent.action) {
             Intent.ACTION_SEND -> single(context, intent)
             Intent.ACTION_SEND_MULTIPLE -> multiple(context, intent)
             else -> null
         }
     }
+
+    /**
+     * Walks a picked folder recursively, keeping each file's path below the folder so the
+     * receiver can rebuild the structure.
+     *
+     * Empty directories are not represented: Beam transfers files, and a directory with no
+     * files in it has nothing to carry. Depth is capped so a pathological tree - or a
+     * symlink loop surfaced through the documents provider - cannot spin forever.
+     */
+    private fun folder(context: Context, treeUri: Uri): BeamPayload? {
+        val root = DocumentFile.fromTreeUri(context, treeUri) ?: return null
+        val files = mutableListOf<FileRef>()
+        collect(root, prefix = root.name?.takeIf { it.isNotBlank() } ?: "folder", depth = 0, into = files)
+        return if (files.isEmpty()) null else BeamPayload.Files(files)
+    }
+
+    private fun collect(dir: DocumentFile, prefix: String, depth: Int, into: MutableList<FileRef>) {
+        if (depth > MAX_FOLDER_DEPTH || into.size >= MAX_FOLDER_FILES) return
+
+        dir.listFiles().forEach { child ->
+            if (into.size >= MAX_FOLDER_FILES) return
+            val name = child.name ?: return@forEach
+            val path = "$prefix/$name"
+
+            if (child.isDirectory) {
+                collect(child, path, depth + 1, into)
+            } else if (child.isFile) {
+                into += FileRef(
+                    uri = child.uri.toString(),
+                    name = name,
+                    mimeType = child.type ?: "application/octet-stream",
+                    sizeBytes = child.length(),
+                    relativePath = path,
+                )
+            }
+        }
+    }
+
+    private const val MAX_FOLDER_DEPTH = 24
+    private const val MAX_FOLDER_FILES = 2_000
 
     private fun single(context: Context, intent: Intent): BeamPayload? {
         // The typed overloads are API 33; Beam supports Android 12.
