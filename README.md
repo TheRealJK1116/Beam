@@ -79,10 +79,40 @@ simulator (verified: no `FakeTransport` in the release dex).
 
 ## Status
 
-Everything above compiles, and the protocol, the HCE card side, the history DAO and a full
-in-process beam are covered by 68 passing unit tests. What is *not* yet verified is the part
-that needs hardware: NFC reader mode, HCE across two real devices, and Nearby Connections
-itself. That is the next step.
+Working on hardware. A 2.7 MB photo beamed between a Nothing A069 and a Pixel 6, both on
+Android 17: **4.78 s from tap to the file committed on the receiver**, verified byte-count
+exact on disk rather than trusted from the sender's own report.
+
+Where that time goes: ~0.2 s to the tap and group join request, ~2.9 s for Wi-Fi Direct group
+formation, DHCP and the socket handshake, ~1.3 s waiting for the human to press Accept, and
+0.42 s of actual transfer. Group formation dominates, so that is where any speed work belongs.
+
+89 unit tests cover the protocol, the HCE card side, the stream framing, the history DAO and a
+full in-process beam.
+
+### Things learned the hard way
+
+- **`ACCESS_LOCAL_NETWORK`** (Android 16+) is required by Nearby Connections, and Play Services
+  has no status code for it — a missing grant surfaces as a bare `INTERNAL_ERROR`, status 8,
+  with the real reason only in GMS's own logcat.
+- **`INTERNET` is required for Wi-Fi Direct.** Android gates the `socket()` syscall behind it,
+  so a link-local socket on a group with no route off the device still needs it. Without it:
+  `EPERM`.
+- **Nearby Connections always uses Bluetooth for its control channel**, under every strategy, so
+  the pairing dialog cannot be avoided while Nearby carries the beam. This is what motivated
+  finishing Wi-Fi Direct.
+- **A socket write is not a delivery.** The sender initially reported success after 222 ms,
+  having only filled its local send buffer, then closed the connection and truncated the
+  receiver at 696 KB of 2.7 MB. The receiver now sends a `RECEIVED` frame once every file is
+  committed, and the sender waits for it.
+
+### Known gaps
+
+- No fallback: if Wi-Fi Direct is available but fails at runtime, the beam fails rather than
+  retrying over Nearby.
+- Group formation is the bulk of the latency and has not been optimised.
+- The Nearby backend's connection handling has no automated coverage; only the frame protocol
+  and error mapping do.
 
 ### Not doing
 

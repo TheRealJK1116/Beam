@@ -3,9 +3,15 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!--
-      Beam needs no internet permission at all: everything happens over NFC and a direct radio
-      link between the two phones. That absence is a feature, and it is enforced here.
+      Beam never contacts a server: everything happens over NFC and a direct radio link between
+      the two phones, with no account, no cloud and no analytics.
+
+      INTERNET is nonetheless required, and the name is misleading. Android gates the socket()
+      syscall itself behind this permission, so creating a TCP socket needs it even when the
+      only address it will ever talk to is 192.168.49.1 on a Wi-Fi Direct group with no route
+      off the device. Without it the Wi-Fi Direct transport dies with EPERM.
     -->
+    <uses-permission android:name="android.permission.INTERNET" />
 
     <uses-permission android:name="android.permission.NFC" />
 

@@ -36,6 +36,16 @@ object BeamFrames {
     const val FILE_HEADER: Byte = 0x07
     const val DONE: Byte = 0x08
 
+    /**
+     * Receiver to sender, last of all: every byte arrived and every file is committed.
+     *
+     * Without this the sender cannot know when it is safe to hang up. A write into a socket
+     * returns once the bytes are buffered locally, not once they are delivered, so a sender
+     * that closes as soon as its last write returns truncates the receiver mid-stream and
+     * reports a transfer time that measures nothing but its own buffer.
+     */
+    const val RECEIVED: Byte = 0x09
+
     /** SHA-256: the fixed-size prefix of an AUTH frame, followed by the sender's stable id. */
     const val PROOF_BYTES = 32
 

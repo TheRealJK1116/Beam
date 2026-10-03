@@ -116,6 +116,7 @@ class WifiDirectTransport(
 
             socket.use { connection ->
                 connection.tcpNoDelay = true
+                connection.soTimeout = READ_TIMEOUT.inWholeMilliseconds.toInt()
                 receiveOver(connection, token, sink, decide, { send(it) }, { trySend(it) })
             }
         } catch (t: Throwable) {
@@ -225,6 +226,9 @@ class WifiDirectTransport(
                 else -> Unit
             }
         }
+
+        // Everything is committed; release the sender.
+        BeamFrames.write(output, BeamFrames.RECEIVED)
 
         emit(
             TransferEvent.Completed(
@@ -360,6 +364,16 @@ class WifiDirectTransport(
         }
 
         BeamFrames.write(output, BeamFrames.DONE)
+
+        // Block until the receiver says it has everything. Closing before this truncates the
+        // transfer, and timing the beam without it measures the local socket buffer.
+        val confirmation = withTimeoutOrNull(DELIVERY_TIMEOUT) {
+            runCatching { BeamFrames.read(input) }.getOrNull()
+        }
+        if (confirmation?.type != BeamFrames.RECEIVED) {
+            emit(TransferEvent.Failed(TransferError.Io("The other phone did not confirm it received everything")))
+            return
+        }
         emit(TransferEvent.Completed(System.currentTimeMillis() - startedAt))
     }
 
@@ -376,6 +390,12 @@ class WifiDirectTransport(
 
         val CONNECT_TIMEOUT: Duration = 20.seconds
         val ACCEPT_TIMEOUT: Duration = 30.seconds
+
+        /** How long the sender waits for the receiver to confirm after the last byte. */
+        val DELIVERY_TIMEOUT: Duration = 60.seconds
+
+        /** Guards against a peer that connects and then goes quiet mid-transfer. */
+        val READ_TIMEOUT: Duration = 60.seconds
         const val SOCKET_ATTEMPT_MILLIS = 1_500
         const val RETRY_INTERVAL_MILLIS = 400L
 
