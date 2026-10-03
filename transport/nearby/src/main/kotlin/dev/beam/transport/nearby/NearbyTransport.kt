@@ -7,7 +7,9 @@ import com.google.android.gms.nearby.Nearby
 import com.google.android.gms.nearby.connection.AdvertisingOptions
 import com.google.android.gms.nearby.connection.ConnectionInfo
 import com.google.android.gms.nearby.connection.ConnectionLifecycleCallback
+import com.google.android.gms.nearby.connection.ConnectionOptions
 import com.google.android.gms.nearby.connection.ConnectionResolution
+import com.google.android.gms.nearby.connection.ConnectionType
 import com.google.android.gms.nearby.connection.ConnectionsStatusCodes
 import com.google.android.gms.nearby.connection.DiscoveredEndpointInfo
 import com.google.android.gms.nearby.connection.DiscoveryOptions
@@ -89,7 +91,7 @@ class NearbyTransport(
                 token.advertisingName,
                 SERVICE_ID,
                 session.connectionCallback,
-                AdvertisingOptions.Builder().setStrategy(STRATEGY).build(),
+                advertisingOptions(),
             ).await()
         }
         if (started.isFailure) {
@@ -156,6 +158,30 @@ class NearbyTransport(
 
         /** One connection, maximum throughput — a beam is always exactly two devices. */
         val STRATEGY: Strategy = Strategy.P2P_POINT_TO_POINT
+
+        /**
+         * Push Nearby towards a direct Wi-Fi link rather than Bluetooth.
+         *
+         * Left to its own judgement, Nearby may settle on a Bluetooth medium for the payload,
+         * which on some devices makes the system show a Bluetooth pairing dialog — exactly the
+         * ceremony a tap is supposed to replace. DISRUPTIVE permits it to drop the current
+         * Wi-Fi association to form a direct link, and the disruptive upgrade lets it move the
+         * payload onto that link once connected.
+         *
+         * The cost is honest: Wi-Fi may blink out for the duration of a transfer. For a beam
+         * that should last a few seconds, and which is far faster over Wi-Fi than Bluetooth,
+         * that is the right trade.
+         */
+        fun advertisingOptions(): AdvertisingOptions = AdvertisingOptions.Builder()
+            .setStrategy(STRATEGY)
+            .setConnectionType(ConnectionType.DISRUPTIVE)
+            .setDisruptiveUpgrade(true)
+            .build()
+
+        fun connectionOptions(): ConnectionOptions = ConnectionOptions.Builder()
+            .setConnectionType(ConnectionType.DISRUPTIVE)
+            .setDisruptiveUpgrade(true)
+            .build()
 
         /**
          * Binds the proof-of-tap to this specific Nearby connection.
@@ -388,7 +414,12 @@ private class SendSession(
 
             client.stopDiscovery()
             scope.trySend(TransferEvent.Connecting)
-            client.requestConnection(localDevice.displayName.take(32), endpointId, connectionCallback)
+            client.requestConnection(
+                localDevice.displayName.take(32),
+                endpointId,
+                connectionCallback,
+                NearbyTransport.connectionOptions(),
+            )
                 .addOnFailureListener { error ->
                     scope.trySend(
                         TransferEvent.Failed(NearbyErrors.toTransferError("requestConnection", error))
