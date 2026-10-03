@@ -61,6 +61,7 @@ class BeamHceService : HostApduService() {
             null
         } ?: return BeamApdu.SW_CONDITIONS_NOT_SATISFIED // receiving is off, or no usable transport
 
+        Log.i(TAG, "Tap answered: published ${token.advertisingName} offering ${token.transports}")
         return SessionTokenCodec.encode(token) + BeamApdu.SW_OK
     }
 

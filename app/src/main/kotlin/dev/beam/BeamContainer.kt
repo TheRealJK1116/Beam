@@ -101,7 +101,23 @@ class BeamContainer(private val context: Context) {
      */
     fun mintSessionForTap(): SessionToken? {
         val snapshot = _settingsSnapshot.value
-        if (!snapshot.receivingEnabled) return null
+        if (!snapshot.receivingEnabled) {
+            android.util.Log.i(TAG, "Tap declined: receiving is switched off")
+            return null
+        }
+
+        // A service woken by a tap cannot show a permission dialog, so refusing here is the
+        // only honest option. The tap is not silently lost: BeamTransferService posts a
+        // notification telling the user to open Beam and grant them.
+        if (!BeamPermissions.isReady(context)) {
+            android.util.Log.w(
+                TAG,
+                "Tap declined: not ready. missing=${BeamPermissions.missingForTransfer(context)} " +
+                    "locationOn=${BeamPermissions.isLocationServiceOn(context)}",
+            )
+            BeamTransferService.notifySetupRequired(context)
+            return null
+        }
 
         val transports = _availableTransports.value.ifEmpty {
             // Nothing probed yet (cold process, first tap after boot). Nearby is the backend we
@@ -118,4 +134,8 @@ class BeamContainer(private val context: Context) {
     }
 
     fun transportFor(id: TransportId): Transport? = registry[id]
+
+    private companion object {
+        const val TAG = "BeamContainer"
+    }
 }

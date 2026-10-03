@@ -63,6 +63,10 @@ class TransferCoordinator(
 
     private var job: Job? = null
 
+    private companion object {
+        const val TAG = "BeamFlow"
+    }
+
     val isBusy: Boolean get() = job?.isActive == true && !_state.value.isTerminal
 
     /** Sender: the tap produced [token]; push [payload] across whichever backend both share. */
@@ -122,6 +126,7 @@ class TransferCoordinator(
 
         job = scope.launch {
             val transport = registry.negotiate(token)
+            android.util.Log.i(TAG, "begin $role; token offers ${token.transports}; negotiated ${transport?.id}")
             if (transport == null) {
                 dispatch(
                     HandshakeEvent.Failed(
@@ -148,7 +153,12 @@ class TransferCoordinator(
     }
 
     private fun dispatch(event: HandshakeEvent) {
-        _state.value = HandshakeReducer.reduce(_state.value, event)
+        val before = _state.value
+        val after = HandshakeReducer.reduce(before, event)
+        if (after != before) {
+            android.util.Log.i(TAG, "${before.javaClass.simpleName} --${event.javaClass.simpleName}--> $after")
+        }
+        _state.value = after
     }
 
     private suspend fun record(role: Role, token: SessionToken, transport: TransportId, startedAt: Long) {

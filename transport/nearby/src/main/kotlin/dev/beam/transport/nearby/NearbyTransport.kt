@@ -95,10 +95,7 @@ class NearbyTransport(
         if (started.isFailure) {
             trySend(
                 TransferEvent.Failed(
-                    TransferError.TransportUnavailable(
-                        TransportId.NEARBY,
-                        started.exceptionOrNull()?.message ?: "Could not start advertising",
-                    )
+                    NearbyErrors.toTransferError("startAdvertising", started.exceptionOrNull())
                 )
             )
             close()
@@ -131,10 +128,7 @@ class NearbyTransport(
         if (started.isFailure) {
             trySend(
                 TransferEvent.Failed(
-                    TransferError.TransportUnavailable(
-                        TransportId.NEARBY,
-                        started.exceptionOrNull()?.message ?: "Could not start discovery",
-                    )
+                    NearbyErrors.toTransferError("startDiscovery", started.exceptionOrNull())
                 )
             )
             close()
@@ -208,7 +202,11 @@ private class ReceiveSession(
 
         override fun onConnectionResult(endpointId: String, resolution: ConnectionResolution) {
             if (resolution.status.statusCode != ConnectionsStatusCodes.STATUS_OK) {
-                scope.trySend(TransferEvent.Failed(TransferError.Io("Connection failed: ${resolution.status.statusMessage ?: resolution.status.statusCode}")))
+                scope.trySend(
+                    TransferEvent.Failed(
+                        NearbyErrors.fromStatus("receiver onConnectionResult", resolution.status.statusCode)
+                    )
+                )
                 scope.close()
                 return
             }
@@ -392,7 +390,9 @@ private class SendSession(
             scope.trySend(TransferEvent.Connecting)
             client.requestConnection(localDevice.displayName.take(32), endpointId, connectionCallback)
                 .addOnFailureListener { error ->
-                    scope.trySend(TransferEvent.Failed(TransferError.Io(error.message ?: "Could not connect")))
+                    scope.trySend(
+                        TransferEvent.Failed(NearbyErrors.toTransferError("requestConnection", error))
+                    )
                     scope.close()
                 }
         }
@@ -408,7 +408,11 @@ private class SendSession(
 
         override fun onConnectionResult(endpointId: String, resolution: ConnectionResolution) {
             if (resolution.status.statusCode != ConnectionsStatusCodes.STATUS_OK) {
-                scope.trySend(TransferEvent.Failed(TransferError.Io("Connection failed: ${resolution.status.statusCode}")))
+                scope.trySend(
+                    TransferEvent.Failed(
+                        NearbyErrors.fromStatus("sender onConnectionResult", resolution.status.statusCode)
+                    )
+                )
                 scope.close()
                 return
             }

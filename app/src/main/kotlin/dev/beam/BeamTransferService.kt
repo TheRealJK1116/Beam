@@ -196,6 +196,7 @@ class BeamTransferService : Service() {
         private const val EXTRA_TOKEN = "dev.beam.extra.TOKEN"
         private const val ID_PROGRESS = 1001
         private const val ID_RESULT = 1002
+        private const val ID_SETUP = 1003
 
         const val CHANNEL_TRANSFER = "beam_transfer"
         const val CHANNEL_INCOMING = "beam_incoming"
@@ -208,6 +209,41 @@ class BeamTransferService : Service() {
             val intent = Intent(context, BeamTransferService::class.java)
                 .putExtra(EXTRA_TOKEN, SessionTokenCodec.encode(token))
             context.startForegroundService(intent)
+        }
+
+        /**
+         * A tap arrived but Beam cannot act on it. Told as a notification because there is no
+         * UI in front of the user at this moment - their phone was sitting on a table.
+         */
+        fun notifySetupRequired(context: Context) {
+            createChannels(context)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU &&
+                ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+                PackageManager.PERMISSION_GRANTED
+            ) {
+                return
+            }
+
+            val open = PendingIntent.getActivity(
+                context,
+                1,
+                Intent(context, dev.beam.ui.MainActivity::class.java)
+                    .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            )
+
+            runCatching {
+                NotificationManagerCompat.from(context).notify(
+                    ID_SETUP,
+                    NotificationCompat.Builder(context, CHANNEL_INCOMING)
+                        .setSmallIcon(R.drawable.ic_beam_notification)
+                        .setContentTitle(context.getString(R.string.notif_setup_title))
+                        .setContentText(context.getString(R.string.notif_setup_text))
+                        .setContentIntent(open)
+                        .setAutoCancel(true)
+                        .build()
+                )
+            }
         }
 
         fun createChannels(context: Context) {

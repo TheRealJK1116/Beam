@@ -40,6 +40,7 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
 import dev.beam.BeamApplication
+import dev.beam.BeamPermissions
 import dev.beam.R
 import dev.beam.core.model.BeamPayload
 import dev.beam.core.session.HandshakeState
@@ -50,6 +51,7 @@ import dev.beam.ui.components.BeamShape
 import dev.beam.ui.theme.BeamTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 
 /**
@@ -63,6 +65,17 @@ class SendActivity : ComponentActivity() {
     private val container get() = (application as BeamApplication).container
     private val payload = MutableStateFlow<BeamPayload?>(null)
     private val resolveError = MutableStateFlow(false)
+    private val ready = MutableStateFlow(false)
+
+    /**
+     * The share sheet can launch this screen without Beam ever having been opened, so this is
+     * the first and only chance to ask. Reader mode is not armed until we are ready - tapping
+     * phones and then failing inside Nearby with a status code is the worst possible way to
+     * tell someone they need to grant a permission.
+     */
+    private val permissionLauncher = registerForActivityResult(
+        androidx.activity.result.contract.ActivityResultContracts.RequestMultiplePermissions()
+    ) { ready.value = BeamPermissions.isReady(this) }
 
     private lateinit var reader: BeamReaderController
 
@@ -82,12 +95,25 @@ class SendActivity : ComponentActivity() {
                 val state by container.coordinator.state.collectAsStateWithLifecycle()
                 val current by payload.collectAsStateWithLifecycle()
                 val failed by resolveError.collectAsStateWithLifecycle()
+                val isReady by ready.collectAsStateWithLifecycle()
 
                 SendScreen(
                     state = state,
                     payload = current,
                     nothingToSend = failed,
                     nfcEnabled = reader.isNfcEnabled,
+                    needsPermissions = !isReady,
+                    locationOff = BeamPermissions.isLocationServiceRequired() &&
+                        !BeamPermissions.isLocationServiceOn(this@SendActivity),
+                    onGrantPermissions = {
+                        val missing = BeamPermissions.missingRequestable(this@SendActivity)
+                        if (missing.isNotEmpty()) {
+                            permissionLauncher.launch(missing.toTypedArray())
+                        } else {
+                            // Only the system location toggle is left, which needs Settings.
+                            startActivity(android.content.Intent(android.provider.Settings.ACTION_LOCATION_SOURCE_SETTINGS))
+                        }
+                    },
                     onCancel = {
                         container.coordinator.cancel()
                         finish()
@@ -97,7 +123,14 @@ class SendActivity : ComponentActivity() {
             }
         }
 
+        ready.value = BeamPermissions.isReady(this)
         awaitTap()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // They may have granted something in Settings and come back.
+        ready.value = BeamPermissions.isReady(this)
     }
 
     /**
@@ -107,6 +140,8 @@ class SendActivity : ComponentActivity() {
      */
     private fun awaitTap() {
         lifecycleScope.launch {
+            // Hold off until Beam can actually complete a transfer.
+            ready.first { it }
             reader.taps().collect { result ->
                 when (result) {
                     is TapResult.Success -> {
@@ -138,13 +173,16 @@ private fun SendScreen(
     payload: BeamPayload?,
     nothingToSend: Boolean,
     nfcEnabled: Boolean,
+    needsPermissions: Boolean,
+    locationOff: Boolean,
+    onGrantPermissions: () -> Unit,
     onCancel: () -> Unit,
     onDone: () -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
     var lastShape by remember { mutableStateOf(BeamShape.Idle) }
 
-    val shape = state.toBlobShape()
+    val shape = if (needsPermissions) BeamShape.Failed else state.toBlobShape()
     val progress = (state as? HandshakeState.Transferring)?.fraction ?: 0f
 
     // A beam is something you feel as much as see — one buzz when it starts moving, a firmer
@@ -182,7 +220,11 @@ private fun SendScreen(
             Spacer(Modifier.height(40.dp))
 
             AnimatedContent(
-                targetState = state.headline(nothingToSend, nfcEnabled),
+                targetState = when {
+                    needsPermissions && locationOff -> stringResource(R.string.send_location_off_title)
+                    needsPermissions -> stringResource(R.string.send_permissions_title)
+                    else -> state.headline(nothingToSend, nfcEnabled)
+                },
                 transitionSpec = {
                     (fadeIn(spring(stiffness = Spring.StiffnessMedium)))
                         .togetherWith(fadeOut(spring(stiffness = Spring.StiffnessMedium)))
@@ -199,7 +241,14 @@ private fun SendScreen(
             Spacer(Modifier.height(12.dp))
 
             Text(
-                text = state.subtitle(payload),
+                text = if (needsPermissions) {
+                    stringResource(
+                        if (locationOff) R.string.send_location_off_subtitle
+                        else R.string.send_permissions_subtitle
+                    )
+                } else {
+                    state.subtitle(payload)
+                },
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                 textAlign = TextAlign.Center,
@@ -226,12 +275,23 @@ private fun SendScreen(
 
             Spacer(Modifier.height(32.dp))
 
-            when (state) {
-                is HandshakeState.Failed -> Button(onClick = onCancel) {
+            when {
+                needsPermissions -> Button(
+                    onClick = onGrantPermissions,
+                    modifier = Modifier.height(56.dp),
+                ) {
+                    Text(
+                        stringResource(
+                            if (locationOff) R.string.action_open_settings else R.string.action_grant
+                        )
+                    )
+                }
+
+                state is HandshakeState.Failed -> Button(onClick = onCancel) {
                     Text(stringResource(R.string.action_close))
                 }
 
-                is HandshakeState.Complete -> Unit
+                state is HandshakeState.Complete -> Unit
 
                 else -> TextButton(onClick = onCancel) {
                     Text(stringResource(R.string.action_cancel))

@@ -1,7 +1,5 @@
 package dev.beam.ui
 
-import android.Manifest
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -47,6 +45,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
@@ -57,6 +56,7 @@ import androidx.navigation.compose.rememberNavController
 import dev.beam.BeamApplication
 import dev.beam.BeamContainer
 import dev.beam.BeamDebug
+import dev.beam.BeamPermissions
 import dev.beam.R
 import dev.beam.data.history.TransferRecord
 import dev.beam.ui.theme.BeamTheme
@@ -113,38 +113,27 @@ class MainActivity : ComponentActivity() {
 // ------------------------------------------------------------------ permissions
 
 /**
- * Nearby Connections needs a different permission set on every platform version Beam supports:
- * fine location on Android 12, `NEARBY_WIFI_DEVICES` from 13, notifications from 13. Asked once
- * on first open rather than in the middle of a tap.
+ * Asks for whatever is still missing, once, when the home screen opens. The real enforcement
+ * lives in [dev.beam.BeamPermissions] and is re-checked by every entry point, because the
+ * share sheet and the NFC receive path can both run without this screen ever being seen.
  */
 @Composable
 private fun rememberBeamPermissions(): PermissionRequester {
+    val context = LocalContext.current
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) { }
 
-    return remember {
-        PermissionRequester { launcher.launch(beamPermissions().toTypedArray()) }
+    return remember(context) {
+        PermissionRequester {
+            val missing = BeamPermissions.missingRequestable(context)
+            if (missing.isNotEmpty()) launcher.launch(missing.toTypedArray())
+        }
     }
 }
 
 private fun interface PermissionRequester {
     fun requestIfNeeded()
-}
-
-internal fun beamPermissions(): List<String> = buildList {
-    add(Manifest.permission.BLUETOOTH_ADVERTISE)
-    add(Manifest.permission.BLUETOOTH_CONNECT)
-    add(Manifest.permission.BLUETOOTH_SCAN)
-
-    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        add(Manifest.permission.NEARBY_WIFI_DEVICES)
-        add(Manifest.permission.POST_NOTIFICATIONS)
-    } else {
-        // Android 12 routes Nearby's Wi-Fi scanning through location.
-        add(Manifest.permission.ACCESS_FINE_LOCATION)
-        add(Manifest.permission.ACCESS_COARSE_LOCATION)
-    }
 }
 
 // ------------------------------------------------------------------------ home
