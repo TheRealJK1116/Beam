@@ -304,18 +304,17 @@ private class ReceiveSession(
      * be one the user has already trusted and skip the confirmation.
      */
     private fun verifyProof(endpointId: String, body: ByteArray) {
-        val proof = body.copyOfRange(0, minOf(PROOF_BYTES, body.size))
-        val claimedId = if (body.size > PROOF_BYTES) {
-            body.copyOfRange(PROOF_BYTES, body.size).toString(Charsets.UTF_8)
-                .filter { it.isLetterOrDigit() || it == '-' || it == '_' }
-                .take(MAX_STABLE_ID)
-        } else {
-            ""
-        }
+        val decoded = dev.beam.core.transport.BeamFrames.decodeAuth(body)
+        val proof = decoded?.first ?: ByteArray(0)
+        val claimed = decoded?.second
 
         val expectedContext = NearbyTransport.authContext(token, authDigits)
         if (SessionAuth.verify(token, expectedContext, proof)) {
-            if (claimedId.isNotBlank()) peer = peer.copy(stableId = claimedId)
+            claimed?.let {
+                if (it.stableId.isNotBlank()) peer = peer.copy(stableId = it.stableId)
+                // The endpoint name is already the sender's, so only override if it gave one.
+                if (it.displayName.isNotBlank()) peer = peer.copy(displayName = it.displayName)
+            }
             client.sendPayload(endpointId, Payload.fromBytes(BeamFrame.of(BeamFrame.AUTH_OK)))
         } else {
             client.sendPayload(endpointId, Payload.fromBytes(BeamFrame.of(BeamFrame.AUTH_FAIL)))
@@ -499,7 +498,10 @@ private class SendSession(
 
         val proof = SessionAuth.proofFor(token, NearbyTransport.authContext(token, authDigits))
         // proof ‖ our stable id, so the receiver can recognise this phone next time.
-        val authBody = proof + localDevice.stableId.take(MAX_STABLE_ID).toByteArray(Charsets.UTF_8)
+        val authBody = dev.beam.core.transport.BeamFrames.encodeAuth(
+            proof,
+            dev.beam.core.transport.BeamFrames.Identity(localDevice.stableId, localDevice.displayName),
+        )
         client.sendPayload(endpointId, Payload.fromBytes(BeamFrame.of(BeamFrame.AUTH, authBody)))
 
         when (withTimeoutOrNull(timeouts.handshake) { control.receive() }) {

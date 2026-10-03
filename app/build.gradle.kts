@@ -42,6 +42,9 @@ android {
     }
     testOptions {
         unitTests.isIncludeAndroidResources = true
+        // The coordinator logs its state transitions; android.util.Log is not implemented in
+        // a plain JVM test, and stubbing it beats contorting the code to avoid logging.
+        unitTests.isReturnDefaultValues = true
     }
 }
 

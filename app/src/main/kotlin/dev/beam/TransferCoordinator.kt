@@ -20,6 +20,11 @@ import dev.beam.data.history.TransferRecord
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.Flow
+import dev.beam.core.transport.Transport
+import android.util.Log
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -77,9 +82,7 @@ class TransferCoordinator(
         lastTotalBytes = payload.sizeBytes
         lastPrimaryUri = null
 
-        start(Role.SENDER, token) { transport ->
-            transport.send(token, payload, source)
-        }
+        startSending(token) { transport -> transport.send(token, payload, source) }
     }
 
     /**
@@ -87,7 +90,7 @@ class TransferCoordinator(
      * [autoAccept] decides without prompting when the peer is already known.
      */
     fun beginReceive(token: SessionToken, autoAccept: suspend (DeviceInfo) -> Boolean) {
-        start(Role.RECEIVER, token) { transport ->
+        startReceiving(token) { transport ->
             transport.receive(token, sink) { manifest, peer ->
                 if (autoAccept(peer)) {
                     true
@@ -116,47 +119,143 @@ class TransferCoordinator(
         if (_state.value.isTerminal) _state.value = HandshakeState.Idle
     }
 
-    private fun start(
-        role: Role,
+    /**
+     * Sender: try each shared transport in turn.
+     *
+     * A transport that reports itself available can still fail when it actually runs — a
+     * Wi-Fi Direct group that will not form, a Nearby call Play Services refuses. Falling back
+     * only makes sense before the peer has committed to anything, so a failure after the
+     * manifest has been offered is final: by then the user has seen a prompt and bytes may
+     * have moved, and silently starting over on another radio would be worse than failing.
+     */
+    private fun startSending(
         token: SessionToken,
-        events: (dev.beam.core.transport.Transport) -> kotlinx.coroutines.flow.Flow<TransferEvent>,
+        events: (Transport) -> Flow<TransferEvent>,
     ) {
         job?.cancel()
-        _state.value = HandshakeReducer.reduce(HandshakeState.Idle, HandshakeEvent.Begin(role))
+        _state.value = HandshakeReducer.reduce(HandshakeState.Idle, HandshakeEvent.Begin(Role.SENDER))
 
         job = scope.launch {
-            val transport = registry.negotiate(token)
-            android.util.Log.i(TAG, "begin $role; token offers ${token.transports}; negotiated ${transport?.id}")
-            if (transport == null) {
-                dispatch(
-                    HandshakeEvent.Failed(
-                        TransferError.TransportUnavailable(
-                            token.transports.firstOrNull() ?: TransportId.NEARBY,
-                            "No shared way to transfer with that device",
-                        )
-                    )
-                )
+            val candidates = candidatesFor(token)
+            Log.i(TAG, "begin SENDER; token offers ${token.transports}; candidates ${candidates.map { it.id }}")
+            if (candidates.isEmpty()) {
+                dispatch(HandshakeEvent.Failed(noSharedTransport(token)))
                 return@launch
             }
 
-            dispatch(HandshakeEvent.TapCompleted(token, transport.id))
-
             val startedAt = System.currentTimeMillis()
-            events(transport).collect { event -> dispatch(event.toHandshakeEvent()) }
+            var used = candidates.first().id
 
-            // A transport that completes its flow without a terminal event has dropped us.
+            for ((index, transport) in candidates.withIndex()) {
+                used = transport.id
+                _state.value = HandshakeReducer.reduce(HandshakeState.Idle, HandshakeEvent.Begin(Role.SENDER))
+                dispatch(HandshakeEvent.TapCompleted(token, transport.id))
+
+                var committed = false
+                events(transport).collect { event ->
+                    if (event is TransferEvent.ManifestOffered || event is TransferEvent.Started) {
+                        committed = true
+                    }
+                    dispatch(event.toHandshakeEvent())
+                }
+
+                val failed = _state.value as? HandshakeState.Failed
+                val isLast = index == candidates.lastIndex
+                if (failed == null || committed || isLast) break
+
+                Log.w(TAG, "${transport.id} failed before committing (${failed.error.message}); trying next")
+            }
+
             if (!_state.value.isTerminal) {
                 dispatch(HandshakeEvent.Failed(TransferError.Io("The transfer ended unexpectedly")))
             }
-            record(role, token, transport.id, startedAt)
+            record(Role.SENDER, token, used, startedAt)
         }
     }
+
+    /**
+     * Receiver: listen on every shared transport at once.
+     *
+     * Trying them one at a time would need both phones to agree on which one they are on, and
+     * nothing coordinates that — the sender could be dialling Wi-Fi Direct while the receiver
+     * has already given up and moved to Nearby. Listening on all of them removes the question:
+     * whichever the sender reaches first wins, and the rest are cancelled.
+     */
+    private fun startReceiving(
+        token: SessionToken,
+        events: (Transport) -> Flow<TransferEvent>,
+    ) {
+        job?.cancel()
+        _state.value = HandshakeReducer.reduce(HandshakeState.Idle, HandshakeEvent.Begin(Role.RECEIVER))
+
+        job = scope.launch {
+            val candidates = candidatesFor(token)
+            Log.i(TAG, "begin RECEIVER; token offers ${token.transports}; listening on ${candidates.map { it.id }}")
+            if (candidates.isEmpty()) {
+                dispatch(HandshakeEvent.Failed(noSharedTransport(token)))
+                return@launch
+            }
+
+            dispatch(HandshakeEvent.TapCompleted(token, candidates.first().id))
+            val startedAt = System.currentTimeMillis()
+            val winner = AtomicReference<TransportId?>(null)
+
+            coroutineScope {
+                val listeners = mutableListOf<Job>()
+                candidates.forEach { transport ->
+                    listeners += launch {
+                        events(transport).collect { event ->
+                            // The first transport to produce a real peer owns the beam.
+                            val claims = event is TransferEvent.ManifestOffered ||
+                                event is TransferEvent.Started
+                            if (claims) {
+                                if (!winner.compareAndSet(null, transport.id) &&
+                                    winner.get() != transport.id
+                                ) {
+                                    return@collect
+                                }
+                                Log.i(TAG, "${transport.id} won the beam")
+                                listeners.filterIndexed { i, _ -> candidates[i].id != transport.id }
+                                    .forEach { it.cancel() }
+                            }
+
+                            val current = winner.get()
+                            if (current == null) {
+                                // Nobody has claimed it yet: only progress-free status events
+                                // can arrive here, and a failure from one radio should not
+                                // kill a beam another is still working on.
+                                if (event !is TransferEvent.Failed || candidates.size == 1) {
+                                    dispatch(event.toHandshakeEvent())
+                                }
+                            } else if (current == transport.id) {
+                                dispatch(event.toHandshakeEvent())
+                            }
+                        }
+                    }
+                }
+            }
+
+            if (!_state.value.isTerminal) {
+                dispatch(HandshakeEvent.Failed(TransferError.Io("No sender arrived")))
+            }
+            record(Role.RECEIVER, token, winner.get() ?: candidates.first().id, startedAt)
+        }
+    }
+
+    /** The transports both devices have, in this device's preference order. */
+    private suspend fun candidatesFor(token: SessionToken): List<Transport> =
+        registry.available().filter { it.id in token.transports }
+
+    private fun noSharedTransport(token: SessionToken) = TransferError.TransportUnavailable(
+        token.transports.firstOrNull() ?: TransportId.NEARBY,
+        "No shared way to transfer with that device",
+    )
 
     private fun dispatch(event: HandshakeEvent) {
         val before = _state.value
         val after = HandshakeReducer.reduce(before, event)
         if (after != before) {
-            android.util.Log.i(TAG, "${before.javaClass.simpleName} --${event.javaClass.simpleName}--> $after")
+            Log.i(TAG, "${before.javaClass.simpleName} --${event.javaClass.simpleName}--> $after")
         }
         _state.value = after
     }

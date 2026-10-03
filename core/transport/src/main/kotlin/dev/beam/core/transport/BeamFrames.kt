@@ -86,6 +86,52 @@ object BeamFrames {
         return Frame(type, body)
     }
 
+    /**
+     * Who the sender is, carried in the AUTH frame's body after the proof.
+     *
+     * The receiver cannot infer this. The session token was minted by the receiver and
+     * describes the receiver, so a receiver that reads a name out of the token is reading its
+     * own — which is exactly the bug this exists to prevent. The only way the receiving phone
+     * learns who is beaming at it is if the sender says so, and it is only believed once the
+     * proof alongside it verifies.
+     */
+    data class Identity(val stableId: String, val displayName: String)
+
+    private const val MAX_ID_BYTES = 24
+    private const val MAX_NAME_BYTES = 48
+
+    /** `proof ‖ idLength ‖ stableId ‖ displayName`. */
+    fun encodeAuth(proof: ByteArray, identity: Identity): ByteArray {
+        val id = identity.stableId.toByteArray(Charsets.UTF_8).take(MAX_ID_BYTES).toByteArray()
+        val name = identity.displayName.toByteArray(Charsets.UTF_8).take(MAX_NAME_BYTES).toByteArray()
+        return proof + byteArrayOf(id.size.toByte()) + id + name
+    }
+
+    /**
+     * Splits an AUTH body. Returns null if it is too short to contain a proof; an older peer
+     * that sends only `proof ‖ stableId` still parses, with an empty display name.
+     */
+    fun decodeAuth(body: ByteArray): Pair<ByteArray, Identity>? {
+        if (body.size < PROOF_BYTES) return null
+        val proof = body.copyOfRange(0, PROOF_BYTES)
+        if (body.size == PROOF_BYTES) return proof to Identity("", "")
+
+        val idLength = body[PROOF_BYTES].toInt() and 0xFF
+        val idStart = PROOF_BYTES + 1
+        if (idStart + idLength > body.size) return proof to Identity("", "")
+
+        val id = body.copyOfRange(idStart, idStart + idLength).toString(Charsets.UTF_8)
+        val name = body.copyOfRange(idStart + idLength, body.size).toString(Charsets.UTF_8)
+        return proof to Identity(id.sanitizedId(), name.sanitizedName())
+    }
+
+    /** Both fields come from an unverified peer and end up on screen or in a database. */
+    private fun String.sanitizedId(): String =
+        filter { it.isLetterOrDigit() || it == '-' || it == '_' }.take(MAX_ID_BYTES)
+
+    private fun String.sanitizedName(): String =
+        filter { !it.isISOControl() }.trim().take(32)
+
     /** Four bytes of index, eight of size — packed by hand so the body is exactly 12 bytes. */
     fun fileHeader(index: Int, sizeBytes: Long): ByteArray {
         val body = ByteArray(12)

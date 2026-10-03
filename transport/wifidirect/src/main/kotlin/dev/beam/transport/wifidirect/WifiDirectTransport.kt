@@ -146,18 +146,23 @@ class WifiDirectTransport(
             emit(TransferEvent.Failed(TransferError.AuthenticationFailed("The other phone did not identify itself")))
             return
         }
-        val proof = auth.body.copyOfRange(0, minOf(BeamFrames.PROOF_BYTES, auth.body.size))
+        val (proof, identity) = BeamFrames.decodeAuth(auth.body)
+            ?: run {
+                BeamFrames.write(output, BeamFrames.AUTH_FAIL)
+                emit(TransferEvent.Failed(TransferError.AuthenticationFailed("Malformed identification")))
+                return
+            }
         if (!SessionAuth.verify(token, authContext(token), proof)) {
             BeamFrames.write(output, BeamFrames.AUTH_FAIL)
             emit(TransferEvent.Failed(TransferError.AuthenticationFailed()))
             return
         }
+
+        // Only now is the claimed identity worth believing. Note this must come from the
+        // sender: the token describes whoever minted it, which is this device.
         val peer = DeviceInfo(
-            stableId = auth.body.drop(BeamFrames.PROOF_BYTES).toByteArray()
-                .toString(Charsets.UTF_8)
-                .filter { it.isLetterOrDigit() || it == '-' || it == '_' }
-                .ifBlank { "unverified" },
-            displayName = token.device.displayName,
+            stableId = identity.stableId.ifBlank { "unverified" },
+            displayName = identity.displayName.ifBlank { DeviceInfo.Unknown.displayName },
         )
         BeamFrames.write(output, BeamFrames.AUTH_OK)
 
@@ -323,11 +328,12 @@ class WifiDirectTransport(
         val manifest = PayloadManifest.of(payload)
 
         // 1. Prove the tap, and say who we are.
+        val me = localDevice()
         val proof = SessionAuth.proofFor(token, authContext(token))
         BeamFrames.write(
             output,
             BeamFrames.AUTH,
-            proof + localDevice().stableId.take(24).toByteArray(Charsets.UTF_8),
+            BeamFrames.encodeAuth(proof, BeamFrames.Identity(me.stableId, me.displayName)),
         )
         val authReply = BeamFrames.read(input)
         if (authReply?.type != BeamFrames.AUTH_OK) {

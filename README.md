@@ -106,13 +106,20 @@ full in-process beam.
   receiver at 696 KB of 2.7 MB. The receiver now sends a `RECEIVED` frame once every file is
   committed, and the sender waits for it.
 
+### Transport fallback
+
+A transport can report itself available and still fail when it runs. The sender tries each
+shared transport in order, falling back only while nothing is committed — once a manifest has
+been offered the user has seen a prompt and bytes may have moved, so a failure after that is
+final. The receiver meanwhile listens on *every* shared transport at once, because nothing
+coordinates which one the two phones would otherwise pick; whichever the sender reaches first
+wins and the rest are cancelled.
+
 ### Known gaps
 
-- No fallback: if Wi-Fi Direct is available but fails at runtime, the beam fails rather than
-  retrying over Nearby.
-- Group formation is the bulk of the latency and has not been optimised.
-- The Nearby backend's connection handling has no automated coverage; only the frame protocol
-  and error mapping do.
+- Group formation is the bulk of the latency (~2.9 s of 4.78 s) and has not been optimised.
+- The Nearby backend's connection handling has no automated coverage; only the frame protocol,
+  identity encoding and error mapping do.
 
 ### Not doing
 
