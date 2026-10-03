@@ -47,16 +47,20 @@ class BeamContainer(private val context: Context) {
         localDevice = { localDevice() },
     )
 
-    private val wifiDirect = WifiDirectTransport(context)
+    private val wifiDirect = WifiDirectTransport(context) { localDevice() }
 
     /**
-     * Preference order. Wi-Fi Direct is listed ahead of nothing yet — it reports itself
-     * unavailable — but it is wired in so that finishing it is a one-line change here.
+     * Preference order, and Wi-Fi Direct now leads it.
+     *
+     * Nearby Connections always raises its control channel over Bluetooth, which makes Android
+     * show a pairing dialog and fails outright when Bluetooth cannot connect. Wi-Fi Direct
+     * derives its credentials from the tap, so it needs no discovery, no pairing and no Play
+     * Services. Nearby stays as the fallback for devices where Wi-Fi Direct is unavailable.
      */
     val registry: TransportRegistry = TransportRegistry(
         buildList {
-            add(nearby)
             add(wifiDirect)
+            add(nearby)
             BeamDebug.extraTransports(context)?.let(::addAll)
         }
     )

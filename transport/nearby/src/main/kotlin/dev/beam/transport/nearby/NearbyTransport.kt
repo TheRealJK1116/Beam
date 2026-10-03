@@ -156,8 +156,16 @@ class NearbyTransport(
         /** Bumping this is how an incompatible wire change is kept from pairing. */
         const val SERVICE_ID = "dev.beam.transfer.v1"
 
-        /** One connection, maximum throughput — a beam is always exactly two devices. */
-        val STRATEGY: Strategy = Strategy.P2P_POINT_TO_POINT
+        /**
+         * P2P_CLUSTER, not P2P_POINT_TO_POINT.
+         *
+         * POINT_TO_POINT offers the highest bandwidth but establishes its control channel over
+         * Bluetooth/BLE only — which makes Android show a Bluetooth pairing dialog, the exact
+         * ceremony a tap exists to replace, and fails outright if Bluetooth cannot connect.
+         * CLUSTER can bring the connection up over Wi-Fi LAN directly. Beam only ever has two
+         * devices, so the cluster topology costs nothing.
+         */
+        val STRATEGY: Strategy = Strategy.P2P_CLUSTER
 
         /**
          * Push Nearby towards a direct Wi-Fi link rather than Bluetooth.
