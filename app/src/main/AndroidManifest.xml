@@ -10,8 +10,12 @@
     <uses-permission android:name="android.permission.NFC" />
 
     <!--
-      Nearby Connections' radio permissions. neverForLocation keeps Bluetooth scanning from
-      being treated as a location grab - Beam only ever talks to the one phone that was tapped.
+      Nearby Connections' radio permissions.
+
+      BLUETOOTH_SCAN carries usesPermissionFlags="neverForLocation", which is what lets Beam
+      ask for no location permission at all. Without the flag, Nearby refuses to scan unless
+      the app holds ACCESS_COARSE_LOCATION (status 8034) - a permission Beam has no business
+      requesting to move a file between two phones that are touching.
     -->
     <uses-permission
         android:name="android.permission.BLUETOOTH_ADVERTISE"
@@ -23,6 +27,14 @@
         android:name="android.permission.BLUETOOTH_SCAN"
         android:usesPermissionFlags="neverForLocation"
         tools:targetApi="s" />
+
+    <!-- Legacy equivalents, for the Nearby code paths that still check them. -->
+    <uses-permission
+        android:name="android.permission.BLUETOOTH"
+        android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_ADMIN"
+        android:maxSdkVersion="30" />
 
     <!--
       Android 12 only: Nearby's Wi-Fi scanning is gated behind location there. Both are
@@ -44,6 +56,17 @@
 
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+
+    <!--
+      Android 16's local-network protections. Nearby Connections moves the payload over a
+      direct link between the two phones, which counts as local network access, and refuses to
+      advertise or discover without this. It is a runtime (dangerous) permission.
+
+      Worth knowing if you ever see this fail: Play Services has no status code mapped to it,
+      so a missing grant surfaces as a bare INTERNAL_ERROR (status 8) with the real reason only
+      in GMS's own logcat output.
+    -->
+    <uses-permission android:name="android.permission.ACCESS_LOCAL_NETWORK" />
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />

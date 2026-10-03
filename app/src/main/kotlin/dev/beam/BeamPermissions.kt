@@ -36,7 +36,22 @@ object BeamPermissions {
             add(Manifest.permission.ACCESS_FINE_LOCATION)
             add(Manifest.permission.ACCESS_COARSE_LOCATION)
         }
+
+        // Android 16+. Nearby Connections will not advertise or discover without it, and
+        // reports its absence only as a generic internal error, so it is checked up front
+        // here rather than being discovered the hard way mid-tap.
+        if (Build.VERSION.SDK_INT >= ANDROID_16) {
+            add(ACCESS_LOCAL_NETWORK)
+        }
     }
+
+    /**
+     * Not referenced through [Manifest.permission] so that the app still builds against an SDK
+     * older than 36; the string is stable platform API.
+     */
+    const val ACCESS_LOCAL_NETWORK = "android.permission.ACCESS_LOCAL_NETWORK"
+
+    private const val ANDROID_16 = 36
 
     /** Everything worth asking for at once, including the nice-to-have. */
     fun allRequestable(): List<String> = buildList {

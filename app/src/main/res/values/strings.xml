@@ -28,7 +28,7 @@
 
     <!-- Home and settings -->
     <string name="home_empty_title">Nothing beamed yet</string>
-    <string name="home_empty_subtitle">Share something and pick Beam, then touch two phones together.</string>
+    <string name="home_empty_subtitle">Tap Send, or share something and pick Beam — then touch two phones together.</string>
     <string name="title_settings">Settings</string>
     <string name="setting_receiving">Receiving</string>
     <string name="setting_receiving_sub">Let other phones beam to this one by tapping it</string>
@@ -45,6 +45,7 @@
     <string name="action_close">Close</string>
     <string name="action_back">Back</string>
     <string name="action_save">Save</string>
+    <string name="action_send_something">Send</string>
     <string name="action_grant">Grant permissions</string>
     <string name="action_open_settings">Open settings</string>
 

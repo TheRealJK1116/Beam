@@ -3,6 +3,9 @@ package dev.beam.ui
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
+import android.content.Context
+import android.content.Intent
+import android.net.Uri
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -21,10 +24,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowBack
 import androidx.compose.material.icons.filled.CallMade
 import androidx.compose.material.icons.filled.CallReceived
+import androidx.compose.material.icons.filled.NearMe
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.ExtendedFloatingActionButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.ListItem
@@ -143,6 +148,13 @@ private fun interface PermissionRequester {
 private fun HomeScreen(container: BeamContainer, onOpenSettings: () -> Unit) {
     val history by remember { container.database.transfers().recent() }
         .collectAsState(initial = emptyList())
+    val context = LocalContext.current
+
+    // Beam used to be reachable only from the share sheet, which made it both undiscoverable
+    // and impossible to start a beam from the app you are looking at.
+    val picker = rememberLauncherForActivityResult(
+        ActivityResultContracts.OpenMultipleDocuments()
+    ) { uris -> if (uris.isNotEmpty()) context.startBeam(uris) }
 
     Scaffold(
         topBar = {
@@ -153,6 +165,13 @@ private fun HomeScreen(container: BeamContainer, onOpenSettings: () -> Unit) {
                         Icon(Icons.Default.Settings, stringResource(R.string.title_settings))
                     }
                 },
+            )
+        },
+        floatingActionButton = {
+            ExtendedFloatingActionButton(
+                onClick = { picker.launch(arrayOf("*/*")) },
+                icon = { Icon(Icons.Default.NearMe, contentDescription = null) },
+                text = { Text(stringResource(R.string.action_send_something)) },
             )
         },
     ) { insets ->
@@ -232,6 +251,25 @@ private fun HistoryRow(record: TransferRecord) {
             },
         )
     }
+}
+
+/**
+ * Hands the chosen files to [SendActivity] as an ordinary share intent, so the in-app path and
+ * the share-sheet path converge immediately and there is only one send flow to maintain.
+ */
+private fun Context.startBeam(uris: List<Uri>) {
+    val intent = Intent(this, SendActivity::class.java).apply {
+        type = "*/*"
+        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        if (uris.size == 1) {
+            action = Intent.ACTION_SEND
+            putExtra(Intent.EXTRA_STREAM, uris.single())
+        } else {
+            action = Intent.ACTION_SEND_MULTIPLE
+            putParcelableArrayListExtra(Intent.EXTRA_STREAM, ArrayList(uris))
+        }
+    }
+    startActivity(intent)
 }
 
 // -------------------------------------------------------------------- settings
