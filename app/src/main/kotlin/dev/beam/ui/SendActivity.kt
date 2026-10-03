@@ -84,11 +84,7 @@ class SendActivity : ComponentActivity() {
         enableEdgeToEdge()
         reader = BeamReaderController(this)
 
-        lifecycleScope.launch {
-            val resolved = IntentPayloads.from(this@SendActivity, intent)
-            payload.value = resolved
-            resolveError.value = resolved == null
-        }
+        resolvePayload(intent)
 
         setContent {
             BeamTheme {
@@ -125,6 +121,25 @@ class SendActivity : ComponentActivity() {
 
         ready.value = BeamPermissions.isReady(this)
         awaitTap()
+    }
+
+    /**
+     * The activity is singleTop, so a second share while it is already open is delivered here
+     * rather than through onCreate. Without this the new payload is silently dropped and the
+     * screen keeps offering the previous one - or nothing at all.
+     */
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        resolvePayload(intent)
+    }
+
+    private fun resolvePayload(source: android.content.Intent) {
+        lifecycleScope.launch {
+            val resolved = IntentPayloads.from(this@SendActivity, source)
+            payload.value = resolved
+            resolveError.value = resolved == null
+        }
     }
 
     override fun onResume() {
@@ -247,7 +262,7 @@ private fun SendScreen(
                         else R.string.send_permissions_subtitle
                     )
                 } else {
-                    state.subtitle(payload)
+                    state.subtitle(payload, nothingToSend)
                 },
                 style = MaterialTheme.typography.bodyLarge,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -257,8 +272,9 @@ private fun SendScreen(
             if (payload != null && state !is HandshakeState.Complete) {
                 Spacer(Modifier.height(32.dp))
                 Card(
+                    // A neutral tone, so it supports the shape rather than competing with it.
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                        containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
                     ),
                     modifier = Modifier.fillMaxWidth(),
                 ) {
@@ -267,7 +283,7 @@ private fun SendScreen(
                         Text(
                             payload.sizeBytes.formatBytes(),
                             style = MaterialTheme.typography.bodyMedium,
-                            color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }
@@ -328,11 +344,14 @@ private fun HandshakeState.headline(nothingToSend: Boolean, nfcEnabled: Boolean)
 }
 
 @Composable
-private fun HandshakeState.subtitle(payload: BeamPayload?): String = when (this) {
-    HandshakeState.Idle, is HandshakeState.AwaitingTap -> stringResource(R.string.send_tap_subtitle)
-    is HandshakeState.Transferring ->
-        "${(fraction * 100).toInt()}% · ${peer.displayName}"
-    is HandshakeState.Complete -> stringResource(R.string.send_done_subtitle, peer.displayName)
-    is HandshakeState.Failed -> stringResource(R.string.send_failed_subtitle)
-    else -> payload?.label.orEmpty()
+private fun HandshakeState.subtitle(payload: BeamPayload?, nothingToSend: Boolean): String = when {
+    nothingToSend -> stringResource(R.string.send_nothing_subtitle)
+    else -> when (this) {
+        HandshakeState.Idle, is HandshakeState.AwaitingTap -> stringResource(R.string.send_tap_subtitle)
+        is HandshakeState.Transferring ->
+            "${(fraction * 100).toInt()}% · ${peer.displayName}"
+        is HandshakeState.Complete -> stringResource(R.string.send_done_subtitle, peer.displayName)
+        is HandshakeState.Failed -> stringResource(R.string.send_failed_subtitle)
+        else -> payload?.label.orEmpty()
+    }
 }

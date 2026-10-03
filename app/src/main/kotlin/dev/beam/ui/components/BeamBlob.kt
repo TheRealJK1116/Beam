@@ -57,10 +57,17 @@ fun BeamBlob(
     progress: Float,
     modifier: Modifier = Modifier,
     size: Dp = 240.dp,
-    color: Color = MaterialTheme.colorScheme.primary,
-    errorColor: Color = MaterialTheme.colorScheme.error,
+    /**
+     * A shape this large is a surface, not an accent, so it takes the soft container tone.
+     * Filling it with `primary` makes a heavy slab of saturated colour that dominates the
+     * screen; the saturated tone is spent on the progress sweep and the tick instead, where
+     * it reads as emphasis.
+     */
+    color: Color = MaterialTheme.colorScheme.primaryContainer,
+    accentColor: Color = MaterialTheme.colorScheme.primary,
+    errorColor: Color = MaterialTheme.colorScheme.errorContainer,
     trackColor: Color = MaterialTheme.colorScheme.surfaceVariant,
-    tickColor: Color = MaterialTheme.colorScheme.onPrimary,
+    tickColor: Color = MaterialTheme.colorScheme.onPrimaryContainer,
 ) {
     // Polygons are costly to build and never change, so build them once.
     val shapes = remember { BlobShapes() }
@@ -152,7 +159,7 @@ fun BeamBlob(
         val centre = Offset(this.size.width / 2f, this.size.height / 2f)
 
         if (ringAlpha > 0.01f) {
-            drawProgressRing(clamped, fill, trackColor, radius, ringAlpha)
+            drawProgressRing(clamped, accentColor, trackColor, radius, ringAlpha)
         }
 
         // The ring sits outside the shape, so the shape shrinks slightly to make room for it.
@@ -162,6 +169,10 @@ fun BeamBlob(
             drawPath(shapes.pathAt(position, bodyRadius, centre), fill)
         }
 
+        // The bolt gives the shape a subject; it hands over to the tick on completion.
+        if (tick < 0.99f) {
+            drawBolt(centre, radius * 0.34f, tickColor, alpha = 1f - tick)
+        }
         if (tick > 0.01f) {
             drawTick(centre, radius * 0.30f, tick, tickColor)
         }
@@ -257,6 +268,32 @@ private fun DrawScope.drawTick(centre: Offset, radius: Float, progress: Float, c
         val second = ((progress - 0.4f) / 0.6f).coerceIn(0f, 1f)
         drawLine(color, elbow, lerp(elbow, end, second), stroke, StrokeCap.Round)
     }
+}
+
+/**
+ * Beam's bolt, the same outline as the launcher and notification icons, so the shape is
+ * recognisably this app rather than a generic blob. Coordinates are the icon's own 24dp
+ * viewport, remapped around the centre.
+ */
+private fun DrawScope.drawBolt(centre: Offset, radius: Float, color: Color, alpha: Float) {
+    val points = listOf(
+        13f to 2f,
+        4.5f to 13.5f,
+        9.7f to 13.5f,
+        9f to 22f,
+        17.5f to 10.5f,
+        12.3f to 10.5f,
+    )
+
+    val path = Path().apply {
+        points.forEachIndexed { index, (x, y) ->
+            val px = centre.x + (x - 12f) / 12f * radius
+            val py = centre.y + (y - 12f) / 12f * radius
+            if (index == 0) moveTo(px, py) else lineTo(px, py)
+        }
+        close()
+    }
+    drawPath(path, color, alpha = alpha)
 }
 
 private fun lerp(from: Offset, to: Offset, fraction: Float): Offset =

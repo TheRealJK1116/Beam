@@ -13,6 +13,7 @@
     <string name="send_done_subtitle">Delivered to %1$s</string>
     <string name="send_failed_subtitle">Try tapping the phones again</string>
     <string name="send_nothing_title">Nothing to send</string>
+    <string name="send_nothing_subtitle">Beam could not read what was shared. Try sharing it again.</string>
     <string name="send_nfc_off_title">Turn on NFC to beam</string>
     <string name="send_permissions_title">Beam needs a few permissions</string>
     <string name="send_permissions_subtitle">Nearby devices and Bluetooth, so the two phones can find each other. Nothing leaves your device.</string>
