@@ -148,6 +148,8 @@ class TransferCoordinator(
         job?.cancel()
         _state.value = HandshakeReducer.reduce(HandshakeState.Idle, HandshakeEvent.Begin(Role.SENDER))
 
+        forgetPreviousTransfer()
+
         job = scope.launch {
             val candidates = candidatesFor(token)
             Log.i(TAG, "begin SENDER; token offers ${token.transports}; candidates ${candidates.map { it.id }}")
@@ -200,6 +202,8 @@ class TransferCoordinator(
     ) {
         job?.cancel()
         _state.value = HandshakeReducer.reduce(HandshakeState.Idle, HandshakeEvent.Begin(Role.RECEIVER))
+
+        forgetPreviousTransfer()
 
         job = scope.launch {
             val candidates = candidatesFor(token)
@@ -276,6 +280,17 @@ class TransferCoordinator(
         "No shared way to transfer with that device",
     )
 
+    /**
+     * Clears what the previous beam left behind.
+     *
+     * These fields describe the transfer being recorded in history; carrying any of them into
+     * the next beam would file it under the wrong peer, name or size.
+     */
+    private fun forgetPreviousTransfer() {
+        lastPeer = null
+        lastPrimaryUri = null
+    }
+
     private fun dispatch(event: HandshakeEvent) {
         val before = _state.value
         val after = HandshakeReducer.reduce(before, event)
@@ -287,9 +302,21 @@ class TransferCoordinator(
 
     private suspend fun record(role: Role, token: SessionToken, transport: TransportId, startedAt: Long) {
         val finalState = _state.value
-        val peer = when (finalState) {
-            is HandshakeState.Complete -> finalState.peer
-            else -> token.device
+
+        /*
+         * Who the other phone was.
+         *
+         * `token.device` is only the peer when *sending* — the receiver minted that token and
+         * it describes itself, so a failed receive used to be filed against this very phone.
+         * Prefer whoever we actually learned about during the beam, fall back to the token
+         * only in the direction where it means the right thing, and otherwise admit we never
+         * found out rather than naming ourselves.
+         */
+        val peer = when {
+            finalState is HandshakeState.Complete -> finalState.peer
+            lastPeer != null -> lastPeer!!
+            role == Role.SENDER -> token.device
+            else -> DeviceInfo.Unknown
         }
         val failure = (finalState as? HandshakeState.Failed)?.error?.message
 
@@ -318,11 +345,15 @@ class TransferCoordinator(
     private var lastTotalBytes: Long = 0
     private var lastPrimaryUri: String? = null
 
+    /** The peer as learned from the transfer itself, which is the only reliable source. */
+    private var lastPeer: DeviceInfo? = null
+
     private fun TransferEvent.toHandshakeEvent(): HandshakeEvent = when (this) {
         TransferEvent.Discovering -> HandshakeEvent.DiscoveryStarted
         TransferEvent.Connecting -> HandshakeEvent.EndpointFound
 
         is TransferEvent.ManifestOffered -> {
+            lastPeer = peer
             lastLabel = manifest.describe()
             lastKind = manifest.kind.name
             lastTotalBytes = manifest.totalBytes
@@ -330,6 +361,7 @@ class TransferCoordinator(
         }
 
         is TransferEvent.Started -> {
+            lastPeer = peer
             lastTotalBytes = totalBytes
             HandshakeEvent.TransferStarted(peer, totalBytes)
         }

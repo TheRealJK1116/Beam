@@ -1,6 +1,9 @@
 package dev.beam.ui
 
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
@@ -18,6 +21,8 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilledTonalButton
+import androidx.compose.material3.FilterChip
+import androidx.compose.material3.Slider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -27,11 +32,13 @@ import androidx.compose.material3.TextButton
 import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import kotlinx.coroutines.launch
@@ -40,6 +47,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import dev.beam.BeamContainer
 import dev.beam.BeamDebug
+import dev.beam.ui.components.BeamBlob
+import dev.beam.ui.components.BeamShape
 
 /**
  * Developer simulation tools. Reachable only from Settings in a debug build; the release
@@ -99,6 +108,43 @@ fun DevScreen(container: BeamContainer, onBack: () -> Unit) {
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
+
+            Spacer(Modifier.height(8.dp))
+            Text("Shape preview", style = MaterialTheme.typography.titleMedium)
+            Text(
+                "Every state the blob can be in, without staging a transfer to see it.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            var previewShape by remember { mutableStateOf(BeamShape.Idle) }
+            var previewProgress by remember { mutableFloatStateOf(0.45f) }
+
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                BeamBlob(shape = previewShape, progress = previewProgress)
+            }
+
+            Row(
+                Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                BeamShape.entries.forEach { shape ->
+                    FilterChip(
+                        selected = previewShape == shape,
+                        onClick = { previewShape = shape },
+                        label = { Text(shape.name) },
+                    )
+                }
+            }
+
+            if (previewShape == BeamShape.Transferring) {
+                Slider(value = previewProgress, onValueChange = { previewProgress = it })
+                Text(
+                    "${(previewProgress * 100).toInt()}%",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
 
             Spacer(Modifier.height(8.dp))
             Text("Resume", style = MaterialTheme.typography.titleMedium)

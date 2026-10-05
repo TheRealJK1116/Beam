@@ -129,8 +129,10 @@ fun BeamBlob(
      */
     val spinScale = when (shape) {
         BeamShape.Idle -> 0.25f
-        BeamShape.Searching -> 1f
-        BeamShape.Transferring -> 0.6f * (1f - clamped)
+        // The pointed shape makes rotation legible, so it no longer needs to spin hard to
+        // look busy; it used to be a near-circle turning fast, which just looked unsteady.
+        BeamShape.Searching -> 0.7f
+        BeamShape.Transferring -> 0.45f * (1f - clamped)
         BeamShape.Done, BeamShape.Failed -> 0f
     }
 
@@ -182,23 +184,44 @@ fun BeamBlob(
 /** Builds the polygon set and the morphs between neighbouring stages once. */
 private class BlobShapes {
 
+    /*
+     * Every stage has the same vertex count, and that is the whole trick.
+     *
+     * `star(numVerticesPerRadius = n)` produces 2n vertices. The first version of this used
+     * star(7) → star(5) → circle(16), i.e. 14 → 10 → 16, so each morph had to interpolate
+     * between outlines whose points did not correspond. graphics-shapes will do it, but the
+     * in-between shapes bulge asymmetrically — which is only visible in the states that *are*
+     * in-between, namely searching and mid-transfer. The endpoints looked fine, which is why
+     * idle and done always did.
+     *
+     * With a shared count of 14 the correspondence is one-to-one and the interpolation is
+     * clean the whole way through.
+     */
     private val star = RoundedPolygon.star(
-        numVerticesPerRadius = 7,
-        innerRadius = 0.78f,
+        numVerticesPerRadius = POINTS,
+        innerRadius = 0.80f,
         rounding = CornerRounding(0.35f),
     )
+
+    /** Pointier than idle, not softer: searching should look like reaching out. */
     private val soft = RoundedPolygon.star(
-        numVerticesPerRadius = 5,
-        innerRadius = 0.9f,
-        rounding = CornerRounding(0.6f),
+        numVerticesPerRadius = POINTS,
+        innerRadius = 0.62f,
+        rounding = CornerRounding(0.26f),
     )
-    private val circle = RoundedPolygon.circle(numVertices = 16)
+
+    private val circle = RoundedPolygon.circle(numVertices = POINTS * 2)
 
     private val stages = listOf(star, soft, circle)
     private val morphs = stages.zipWithNext().map { (from, to) -> Morph(from, to) }
 
     private val scratch = android.graphics.Path()
     private val matrix = android.graphics.Matrix()
+
+    private companion object {
+        /** 7 points per radius = 14 vertices, shared by every stage. */
+        const val POINTS = 7
+    }
 
     /**
      * [position] walks 0..2 across the three stages, morphing between the two it sits between.
@@ -300,6 +323,6 @@ private fun lerp(from: Offset, to: Offset, fraction: Float): Offset =
     Offset(from.x + (to.x - from.x) * fraction, from.y + (to.y - from.y) * fraction)
 
 /** How much of the canvas the shape itself fills, before the ring claims its margin. */
-private const val BODY_FRACTION = 0.78f
-private const val RING_INSET_FRACTION = 0.1f
+private const val BODY_FRACTION = 0.76f
+private const val RING_INSET_FRACTION = 0.04f
 private const val SPIN_PERIOD_MILLIS = 6_000
