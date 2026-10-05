@@ -110,6 +110,19 @@ Verified end to end:
   receiver at 696 KB of 2.7 MB. The receiver now sends a `RECEIVED` frame once every file is
   committed, and the sender waits for it.
 
+### Both backends honour protocol 2
+
+Nearby and Wi-Fi Direct share one frame vocabulary and one sequence, so a transfer gets the
+same guarantees — relative paths, a per-file SHA-256, resume from an interrupted attempt —
+whichever radio wins the race. They differ only where the medium forces it: a socket has no
+message boundaries, so Wi-Fi Direct length-prefixes its frames and hashes each file on the
+way past; Nearby's payloads are already messages, but it hands frames and streams to separate
+callbacks with no ordering between them, so it sends each digest ahead of its file and the
+receiver waits for the one that names the file it just finished.
+
+That costs Nearby an extra local read per file, since Play Services reads the stream rather
+than us. On the fallback path that is a fair price for being able to detect a damaged file.
+
 ### Transport fallback
 
 A transport can report itself available and still fail when it runs. The sender tries each
@@ -121,10 +134,6 @@ wins and the rest are cancelled.
 
 ### Known gaps
 
-- **The Nearby fallback has none of the v2 guarantees** — no per-file digests, no resume, no
-  folder paths — while the session token advertises protocol 2. The receiver listens on both
-  radios, so which guarantees apply depends on which one wins. Wi-Fi Direct wins in practice,
-  but that is luck rather than design.
 - **Release builds are unsigned.** There is no signing config; `assembleRelease` produces an
   unsigned APK that nobody can install.
 - Group formation dominates the latency and has not been optimised.

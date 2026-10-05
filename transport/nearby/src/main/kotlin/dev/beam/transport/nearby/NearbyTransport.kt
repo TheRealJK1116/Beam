@@ -27,6 +27,7 @@ import dev.beam.core.model.TransferEvent
 import dev.beam.core.model.TransportId
 import dev.beam.core.session.SessionAuth
 import dev.beam.core.session.SessionToken
+import dev.beam.core.transport.BeamFrames
 import dev.beam.core.transport.PayloadSink
 import dev.beam.core.transport.PayloadSource
 import dev.beam.core.transport.Transport
@@ -235,6 +236,24 @@ private class ReceiveSession(
     private val destinations = ConcurrentHashMap<Long, PayloadSink.Destination>()
     private val payloadIndex = ConcurrentHashMap<Long, Int>()
 
+    /**
+     * The digest the sender promised for each file, which may arrive before or after the
+     * bytes it describes.
+     *
+     * Unlike a socket, Nearby hands BYTES frames and STREAM payloads to different callbacks
+     * with no ordering guarantee between them, so the stream handler waits on this rather
+     * than assuming a trailer has already landed.
+     */
+    private val expectedDigests = ConcurrentHashMap<Int, CompletableDeferred<ByteArray>>()
+
+    /** Resumes resolved up front, so the offer and the reopen cannot disagree. */
+    private val resumable = ConcurrentHashMap<Int, PayloadSink.Resumed>()
+
+    private val headers = ConcurrentHashMap<Int, BeamFrames.FileHeader>()
+
+    private fun digestSlot(index: Int): CompletableDeferred<ByteArray> =
+        expectedDigests.getOrPut(index) { CompletableDeferred() }
+
     val connectionCallback = object : ConnectionLifecycleCallback() {
         override fun onConnectionInitiated(endpointId: String, info: ConnectionInfo) {
             authDigits = info.authenticationDigits
@@ -301,11 +320,17 @@ private class ReceiveSession(
     }
 
     private fun handleControlFrame(endpointId: String, frame: ByteArray) {
-        when (BeamFrame.typeOf(frame)) {
-            BeamFrame.AUTH -> verifyProof(endpointId, BeamFrame.bodyOf(frame))
-            BeamFrame.MANIFEST -> receiveManifest(endpointId, BeamFrame.bodyOf(frame))
-            BeamFrame.FILE_HEADER -> pendingFileIndex = BeamFrame.fileIndexOf(frame) ?: -1
-            BeamFrame.DONE -> finish()
+        when (BeamFrames.typeOf(frame)) {
+            BeamFrames.AUTH -> verifyProof(endpointId, BeamFrames.bodyOf(frame))
+            BeamFrames.MANIFEST -> receiveManifest(endpointId, BeamFrames.bodyOf(frame))
+            BeamFrames.FILE_HEADER -> BeamFrames.parseFileHeader(BeamFrames.bodyOf(frame))?.let {
+                headers[it.index] = it
+                pendingFileIndex = it.index
+            }
+
+            BeamFrames.FILE_DIGEST -> BeamFrames.parseIndexedDigest(BeamFrames.bodyOf(frame))
+                ?.let { (index, digest) -> digestSlot(index).complete(digest) }
+            BeamFrames.DONE -> finish()
             else -> Unit
         }
     }
@@ -316,7 +341,7 @@ private class ReceiveSession(
      * be one the user has already trusted and skip the confirmation.
      */
     private fun verifyProof(endpointId: String, body: ByteArray) {
-        val decoded = dev.beam.core.transport.BeamFrames.decodeAuth(body)
+        val decoded = BeamFrames.decodeAuth(body)
         val proof = decoded?.first ?: ByteArray(0)
         val claimed = decoded?.second
 
@@ -327,9 +352,9 @@ private class ReceiveSession(
                 // The endpoint name is already the sender's, so only override if it gave one.
                 if (it.displayName.isNotBlank()) peer = peer.copy(displayName = it.displayName)
             }
-            client.sendPayload(endpointId, Payload.fromBytes(BeamFrame.of(BeamFrame.AUTH_OK)))
+            client.sendPayload(endpointId, Payload.fromBytes(BeamFrames.of(BeamFrames.AUTH_OK)))
         } else {
-            client.sendPayload(endpointId, Payload.fromBytes(BeamFrame.of(BeamFrame.AUTH_FAIL)))
+            client.sendPayload(endpointId, Payload.fromBytes(BeamFrames.of(BeamFrames.AUTH_FAIL)))
             scope.launch { abort(endpointId, TransferError.AuthenticationFailed()) }
         }
     }
@@ -345,14 +370,34 @@ private class ReceiveSession(
         scope.launch {
             val accepted = withTimeoutOrNull(timeouts.acceptance) { decide(decoded, peer) } ?: false
             if (accepted) {
-                client.sendPayload(endpointId, Payload.fromBytes(BeamFrame.of(BeamFrame.ACCEPT)))
+                client.sendPayload(endpointId, Payload.fromBytes(BeamFrames.of(BeamFrames.ACCEPT)))
+
+                // Tell the sender what survived an earlier attempt so it can skip ahead.
+                val held = mutableMapOf<Int, Long>()
+                if (decoded.kind == PayloadManifest.Kind.FILES) {
+                    decoded.files.forEachIndexed { index, entry ->
+                        val partial = runCatching { sink.resume(entry, peer.stableId) }.getOrNull()
+                            ?: return@forEachIndexed
+                        if (partial.bytesHeld in 1 until entry.sizeBytes) {
+                            resumable[index] = partial
+                            held[index] = partial.bytesHeld
+                        } else {
+                            runCatching { partial.retain(partial.bytesHeld) }
+                        }
+                    }
+                }
+                client.sendPayload(
+                    endpointId,
+                    Payload.fromBytes(BeamFrames.of(BeamFrames.RESUME_OFFER, BeamFrames.resumeOffer(held))),
+                )
+
                 startedAt = System.currentTimeMillis()
                 scope.trySend(TransferEvent.Started(decoded.totalBytes, peer))
                 if (decoded.kind != PayloadManifest.Kind.FILES) {
                     committedUris += sink.acceptText(decoded, decoded.text.orEmpty())
                 }
             } else {
-                client.sendPayload(endpointId, Payload.fromBytes(BeamFrame.of(BeamFrame.DECLINE)))
+                client.sendPayload(endpointId, Payload.fromBytes(BeamFrames.of(BeamFrames.DECLINE)))
                 abort(endpointId, TransferError.Rejected())
             }
         }
@@ -364,23 +409,61 @@ private class ReceiveSession(
         val entry = manifest.files.getOrNull(index) ?: return
         payloadIndex[payload.id] = index
 
+        val header = headers[index] ?: BeamFrames.FileHeader(index, entry.sizeBytes, 0L)
+        val resumed = resumable.remove(index)
+
         scope.launch(Dispatchers.IO) {
-            val destination = sink.create(entry)
+            scope.trySend(TransferEvent.FileStarted(index, entry.name, manifest.files.size))
+
+            val digest = BeamFrames.sha256()
+            val destination = if (header.offset > 0L && resumed != null && resumed.bytesHeld == header.offset) {
+                // Fold what is already on disk into the hash, so the comparison covers the
+                // whole file rather than only the bytes from this attempt.
+                runCatching { resumed.openHeld().use { BeamFrames.digestExactly(it, header.offset, digest) } }
+                resumed
+            } else {
+                runCatching { resumed?.discard() }
+                sink.create(entry, peer.stableId)
+            }
             destinations[payload.id] = destination
+
+            var written = 0L
             val result = runCatching {
                 payload.asStream()?.asInputStream()?.use { input: InputStream ->
-                    destination.stream.use { output -> input.copyTo(output, DEFAULT_BUFFER) }
+                    destination.stream.use { output ->
+                        BeamFrames.copyExactly(
+                            input = input,
+                            output = output,
+                            count = header.remaining,
+                            digest = digest,
+                            onProgress = { moved -> written = moved },
+                        )
+                    }
                 } ?: error("stream payload had no stream")
             }
-            if (result.isSuccess) {
-                committedUris += destination.commit()
-                bytesCompleted += entry.sizeBytes
-                scope.trySend(TransferEvent.Progress(bytesCompleted, manifest.totalBytes))
-            } else {
-                destination.discard()
+
+            if (result.isFailure) {
+                // The bytes that arrived are good; keep them so the next attempt resumes.
+                destination.retain(header.offset + written)
                 scope.trySend(TransferEvent.Failed(TransferError.Io("Could not save ${entry.name}")))
                 scope.close()
+                return@launch
             }
+
+            // Nearby may hand us the digest frame before or after the body.
+            val expected = withTimeoutOrNull(DIGEST_TIMEOUT) { digestSlot(index).await() }
+            if (expected == null || !expected.contentEquals(digest.digest())) {
+                // Known-bad bytes: delete rather than retain, or every later resume would
+                // build on corruption.
+                destination.discard()
+                scope.trySend(TransferEvent.Failed(TransferError.IntegrityFailed(entry.name)))
+                scope.close()
+                return@launch
+            }
+
+            committedUris += destination.commit()
+            bytesCompleted += entry.sizeBytes
+            scope.trySend(TransferEvent.Progress(bytesCompleted, manifest.totalBytes))
         }
     }
 
@@ -402,7 +485,7 @@ private class ReceiveSession(
     }
 
     private companion object {
-        const val DEFAULT_BUFFER = 64 * 1024
+        val DIGEST_TIMEOUT = 30.seconds
     }
 }
 
@@ -420,6 +503,10 @@ private class SendSession(
     val endpointFound = CompletableDeferred<String>()
 
     private val control = Channel<Byte>(Channel.BUFFERED)
+
+    /** Body of the last RESUME_OFFER, read alongside its type from the control channel. */
+    @Volatile
+    private var resumeOffer: Map<Int, Long> = emptyMap()
     private val payloadDone = ConcurrentHashMap<Long, CompletableDeferred<Boolean>>()
     private var authDigits: String = ""
     private var startedAt: Long = 0
@@ -478,7 +565,12 @@ private class SendSession(
     val payloadCallback = object : PayloadCallback() {
         override fun onPayloadReceived(endpointId: String, payload: Payload) {
             if (payload.type != Payload.Type.BYTES) return
-            BeamFrame.typeOf(payload.asBytes() ?: return)?.let(control::trySend)
+            val frame = payload.asBytes() ?: return
+            val type = BeamFrames.typeOf(frame) ?: return
+            if (type == BeamFrames.RESUME_OFFER) {
+                resumeOffer = BeamFrames.parseResumeOffer(BeamFrames.bodyOf(frame))
+            }
+            control.trySend(type)
         }
 
         override fun onPayloadTransferUpdate(endpointId: String, update: PayloadTransferUpdate) {
@@ -510,46 +602,84 @@ private class SendSession(
 
         val proof = SessionAuth.proofFor(token, NearbyTransport.authContext(token, authDigits))
         // proof ‖ our stable id, so the receiver can recognise this phone next time.
-        val authBody = dev.beam.core.transport.BeamFrames.encodeAuth(
+        val authBody = BeamFrames.encodeAuth(
             proof,
-            dev.beam.core.transport.BeamFrames.Identity(localDevice.stableId, localDevice.displayName),
+            BeamFrames.Identity(localDevice.stableId, localDevice.displayName),
         )
-        client.sendPayload(endpointId, Payload.fromBytes(BeamFrame.of(BeamFrame.AUTH, authBody)))
+        client.sendPayload(endpointId, Payload.fromBytes(BeamFrames.of(BeamFrames.AUTH, authBody)))
 
         when (withTimeoutOrNull(timeouts.handshake) { control.receive() }) {
-            BeamFrame.AUTH_OK -> Unit
-            BeamFrame.AUTH_FAIL -> return fail(TransferError.AuthenticationFailed())
+            BeamFrames.AUTH_OK -> Unit
+            BeamFrames.AUTH_FAIL -> return fail(TransferError.AuthenticationFailed())
             else -> return fail(TransferError.AuthenticationFailed("No answer from the other device"))
         }
 
-        client.sendPayload(endpointId, Payload.fromBytes(BeamFrame.of(BeamFrame.MANIFEST, manifest.encode())))
+        client.sendPayload(endpointId, Payload.fromBytes(BeamFrames.of(BeamFrames.MANIFEST, manifest.encode())))
 
         when (withTimeoutOrNull(timeouts.acceptance) { control.receive() }) {
-            BeamFrame.ACCEPT -> Unit
-            BeamFrame.DECLINE -> return fail(TransferError.Rejected())
+            BeamFrames.ACCEPT -> Unit
+            BeamFrames.DECLINE -> return fail(TransferError.Rejected())
             else -> return fail(TransferError.Rejected("No answer"))
         }
 
         startedAt = System.currentTimeMillis()
         scope.trySend(TransferEvent.Started(manifest.totalBytes, token.device))
 
+        // What the receiver already holds, if anything.
+        val held = withTimeoutOrNull(timeouts.handshake) { control.receive() }
+            ?.let { if (it == BeamFrames.RESUME_OFFER) resumeOffer else emptyMap() }
+            ?: emptyMap()
+
         if (payload is BeamPayload.Files) {
             payload.files.forEachIndexed { index, ref ->
-                client.sendPayload(endpointId, Payload.fromBytes(BeamFrame.fileHeader(index)))
-                val stream = runCatching { source.open(ref) }.getOrElse {
+                val entry = manifest.files[index]
+                scope.trySend(TransferEvent.FileStarted(index, entry.name, payload.files.size))
+
+                val offset = (held[index] ?: 0L).coerceIn(0L, entry.sizeBytes)
+
+                /*
+                 * The digest is computed in a pass of its own and sent before the body.
+                 *
+                 * Nearby hands BYTES frames and STREAM payloads to different callbacks with
+                 * no ordering guarantee, and the stream is read by Play Services rather than
+                 * by us, so there is no natural point at which to hash it on the way past as
+                 * the Wi-Fi Direct path does. An extra local read on the fallback transport
+                 * is a fair price for the receiver being able to detect a damaged file.
+                 */
+                val digest = runCatching {
+                    BeamFrames.sha256().also { d ->
+                        source.open(ref).use { BeamFrames.digestExactly(it, entry.sizeBytes, d) }
+                    }.digest()
+                }.getOrElse { return fail(TransferError.Io("Could not read ${ref.safeName}")) }
+
+                client.sendPayload(
+                    endpointId,
+                    Payload.fromBytes(BeamFrames.of(BeamFrames.FILE_DIGEST, BeamFrames.indexedDigest(index, digest))),
+                )
+                client.sendPayload(
+                    endpointId,
+                    Payload.fromBytes(
+                        BeamFrames.of(BeamFrames.FILE_HEADER, BeamFrames.fileHeader(index, entry.sizeBytes, offset)),
+                    ),
+                )
+
+                val stream = runCatching {
+                    source.open(ref).also { if (offset > 0) it.skipExactly(offset) }
+                }.getOrElse {
                     return fail(TransferError.Io("Could not read ${ref.safeName}"))
                 }
+
                 val filePayload = Payload.fromStream(stream)
                 val done = CompletableDeferred<Boolean>()
                 payloadDone[filePayload.id] = done
                 client.sendPayload(endpointId, filePayload)
                 if (!done.await()) return fail(TransferError.Io("Sending ${ref.safeName} failed"))
-                sentBefore += ref.sizeBytes
+                sentBefore += entry.sizeBytes
                 scope.trySend(TransferEvent.Progress(sentBefore, manifest.totalBytes))
             }
         }
 
-        client.sendPayload(endpointId, Payload.fromBytes(BeamFrame.of(BeamFrame.DONE)))
+        client.sendPayload(endpointId, Payload.fromBytes(BeamFrames.of(BeamFrames.DONE)))
         scope.trySend(TransferEvent.Completed(System.currentTimeMillis() - startedAt))
         scope.close()
     }
@@ -563,6 +693,17 @@ private const val MAX_STABLE_ID = 24
 
 /** Stands in until the sender has proved who it is. */
 private const val PENDING_PEER_ID = "unverified"
+
+/** Advances a stream by exactly [count] bytes; skip() is allowed to do less. */
+private fun java.io.InputStream.skipExactly(count: Long) {
+    var remaining = count
+    val scratch = ByteArray(64 * 1024)
+    while (remaining > 0) {
+        val read = read(scratch, 0, minOf(remaining, scratch.size.toLong()).toInt())
+        if (read < 0) throw java.io.EOFException("could not skip $count bytes")
+        remaining -= read
+    }
+}
 
 /** Endpoint names come from another device; never render one unfiltered. */
 private fun String.sanitizedPeerName(): String =

@@ -85,6 +85,40 @@ object BeamFrames {
         override fun hashCode(): Int = 31 * type.toInt() + body.contentHashCode()
     }
 
+    /**
+     * The same frame for a transport that already has message boundaries.
+     *
+     * Nearby Connections delivers each BYTES payload as a discrete message, so it needs only
+     * the type byte and the body - the length prefix that [write] adds exists purely because
+     * a socket has no boundaries of its own.
+     */
+    fun of(type: Byte, body: ByteArray = ByteArray(0)): ByteArray =
+        ByteArray(1 + body.size).also {
+            it[0] = type
+            body.copyInto(it, 1)
+        }
+
+    fun typeOf(frame: ByteArray): Byte? = frame.firstOrNull()
+
+    fun bodyOf(frame: ByteArray): ByteArray =
+        if (frame.size <= 1) ByteArray(0) else frame.copyOfRange(1, frame.size)
+
+    /** `index ‖ sha-256`, for a digest that must name the file it belongs to. */
+    fun indexedDigest(index: Int, digest: ByteArray): ByteArray {
+        val body = ByteArray(4 + digest.size)
+        for (i in 0 until 4) body[i] = (index ushr (24 - 8 * i)).toByte()
+        digest.copyInto(body, 4)
+        return body
+    }
+
+    fun parseIndexedDigest(body: ByteArray): Pair<Int, ByteArray>? {
+        if (body.size != 4 + DIGEST_BYTES) return null
+        var index = 0
+        for (i in 0 until 4) index = (index shl 8) or (body[i].toInt() and 0xFF)
+        if (index < 0) return null
+        return index to body.copyOfRange(4, body.size)
+    }
+
     /** A control frame: one byte of type, a four-byte length, then the body. */
     fun write(out: OutputStream, type: Byte, body: ByteArray = ByteArray(0)) {
         require(body.size <= MAX_BODY_BYTES) { "frame body of ${body.size} bytes is too large" }

@@ -5,44 +5,49 @@ import dev.beam.core.model.DeviceInfo
 import dev.beam.core.model.TransportId
 import dev.beam.core.session.SessionAuth
 import dev.beam.core.session.SessionToken
+import dev.beam.core.transport.BeamFrames
 import org.junit.Test
 
 /**
  * The control protocol inside a Nearby connection. These are the parts that can be checked
  * without two phones and a radio; the connection handling itself needs hardware.
  */
-class BeamFrameTest {
+class NearbyProtocolTest {
 
     @Test
     fun `a frame round trips its type and body`() {
-        val frame = BeamFrame.of(BeamFrame.AUTH, byteArrayOf(1, 2, 3))
-        assertThat(BeamFrame.typeOf(frame)).isEqualTo(BeamFrame.AUTH)
-        assertThat(BeamFrame.bodyOf(frame)).isEqualTo(byteArrayOf(1, 2, 3))
+        val frame = BeamFrames.of(BeamFrames.AUTH, byteArrayOf(1, 2, 3))
+        assertThat(BeamFrames.typeOf(frame)).isEqualTo(BeamFrames.AUTH)
+        assertThat(BeamFrames.bodyOf(frame)).isEqualTo(byteArrayOf(1, 2, 3))
     }
 
     @Test
     fun `a bodyless frame has an empty body rather than failing`() {
-        val frame = BeamFrame.of(BeamFrame.DONE)
-        assertThat(BeamFrame.typeOf(frame)).isEqualTo(BeamFrame.DONE)
-        assertThat(BeamFrame.bodyOf(frame)).isEmpty()
+        val frame = BeamFrames.of(BeamFrames.DONE)
+        assertThat(BeamFrames.typeOf(frame)).isEqualTo(BeamFrames.DONE)
+        assertThat(BeamFrames.bodyOf(frame)).isEmpty()
     }
 
     @Test
     fun `an empty payload yields no type instead of an index crash`() {
-        assertThat(BeamFrame.typeOf(ByteArray(0))).isNull()
-        assertThat(BeamFrame.bodyOf(ByteArray(0))).isEmpty()
+        assertThat(BeamFrames.typeOf(ByteArray(0))).isNull()
+        assertThat(BeamFrames.bodyOf(ByteArray(0))).isEmpty()
     }
 
     @Test
-    fun `file indices round trip, including ones above a byte`() {
-        listOf(0, 1, 255, 256, 70_000).forEach { index ->
-            assertThat(BeamFrame.fileIndexOf(BeamFrame.fileHeader(index))).isEqualTo(index)
-        }
+    fun `a digest names the file it belongs to`() {
+        // Nearby delivers frames and streams through separate callbacks, so a digest that
+        // did not identify its file could be matched to the wrong one.
+        val digest = ByteArray(BeamFrames.DIGEST_BYTES) { it.toByte() }
+        val (index, decoded) = BeamFrames.parseIndexedDigest(BeamFrames.indexedDigest(7, digest))!!
+        assertThat(index).isEqualTo(7)
+        assertThat(decoded).isEqualTo(digest)
     }
 
     @Test
-    fun `a file header of the wrong length is rejected`() {
-        assertThat(BeamFrame.fileIndexOf(BeamFrame.of(BeamFrame.FILE_HEADER, byteArrayOf(1, 2)))).isNull()
+    fun `a malformed indexed digest is rejected rather than truncated`() {
+        assertThat(BeamFrames.parseIndexedDigest(ByteArray(10))).isNull()
+        assertThat(BeamFrames.parseIndexedDigest(ByteArray(4 + BeamFrames.DIGEST_BYTES + 1))).isNull()
     }
 
     @Test
@@ -65,6 +70,13 @@ class BeamFrameTest {
         val b = SessionToken.mint(DeviceInfo("r", "R"), listOf(TransportId.NEARBY))
         assertThat(NearbyTransport.authContext(a, "1234"))
             .isNotEqualTo(NearbyTransport.authContext(b, "1234"))
+    }
+
+    @Test
+    fun `a bodyless frame survives the message envelope`() {
+        val frame = BeamFrames.of(BeamFrames.DONE)
+        assertThat(BeamFrames.typeOf(frame)).isEqualTo(BeamFrames.DONE)
+        assertThat(BeamFrames.bodyOf(frame)).isEmpty()
     }
 
     @Test
