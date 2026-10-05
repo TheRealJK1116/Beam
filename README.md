@@ -143,8 +143,18 @@ wins and the rest are cancelled.
   identity encoding and error mapping do.
 - Resume is verified against an injected interruption, but not against a genuinely flaky
   radio: the fault is clean and instantaneous, where a real one is noisy and gradual.
+- Seen once and not explained: a sender finished a 12-byte text transfer without noticing it
+  had ended, while the receiver completed normally in 241 ms. It has not reproduced since, and
+  the sender's log was gone before it could be read, so there is no root cause here — only a
+  sighting. A text payload rides inside the manifest, so the sender emits `Started` and then
+  nothing until `Completed`, with no progress event in between; that is the first place to
+  look if it recurs.
 
 ### Not doing
 
 Cloud sync, accounts, messaging, social features, analytics. No Shizuku — no dependency, no
 permission, no stub.
+
+## Licence
+
+Apache 2.0. See [LICENSE](LICENSE).
