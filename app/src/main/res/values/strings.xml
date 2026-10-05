@@ -84,5 +84,4 @@
     <string name="notif_setup_title">Beam needs setting up</string>
     <string name="notif_setup_text">Someone tried to beam to this phone. Open Beam to grant the permissions it needs.</string>
 
-    <string name="share_target_label">Beam to a nearby phone</string>
 </resources>

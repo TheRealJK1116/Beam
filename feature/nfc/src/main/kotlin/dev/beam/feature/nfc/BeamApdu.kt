@@ -17,8 +17,13 @@ object BeamApdu {
     /**
      * Beam's application id. Proprietary (0xF…) range, "Beam" in ASCII, then a version byte, so
      * an incompatible future protocol can simply register a different AID.
+     *
+     * The final byte is set per build type, so a debug install and a release install register
+     * different AIDs and the platform never has to ask which of them a tap belongs to. It must
+     * stay in step with `beam_aid` in the same build file, which is what the manifest declares.
      */
-    val AID: ByteArray = byteArrayOf(0xF0.toByte(), 0x42, 0x65, 0x61, 0x6D, 0x01)
+    val AID: ByteArray =
+        byteArrayOf(0xF0.toByte(), 0x42, 0x65, 0x61, 0x6D, BuildConfig.AID_VARIANT.toByte())
 
     val AID_HEX: String = AID.joinToString("") { "%02X".format(it) }
 

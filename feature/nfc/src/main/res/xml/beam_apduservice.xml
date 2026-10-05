@@ -13,6 +13,7 @@
     <aid-group
         android:category="other"
         android:description="@string/beam_hce_description">
-        <aid-filter android:name="F04265616D01" />
+        <!-- Per build type: debug and release must not claim the same AID. -->
+        <aid-filter android:name="@string/beam_aid" />
     </aid-group>
 </host-apdu-service>

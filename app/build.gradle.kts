@@ -50,9 +50,13 @@ android {
             // Debug installs alongside release; without this they are two identical
             // "Beam" icons and there is no way to tell which one you are testing.
             resValue("string", "app_name", "Beam (debug)")
+            // The share sheet labels the entry with the activity's label, not the app's, so
+            // this needs the same treatment or both builds appear in it identically.
+            resValue("string", "share_target_label", "Beam to a nearby phone (debug)")
         }
         release {
             resValue("string", "app_name", "Beam")
+            resValue("string", "share_target_label", "Beam to a nearby phone")
             signingConfig = if (hasSigningConfig) {
                 signingConfigs.getByName("release")
             } else {

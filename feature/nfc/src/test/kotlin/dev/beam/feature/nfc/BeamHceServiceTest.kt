@@ -136,7 +136,12 @@ class BeamHceServiceTest {
 
     @Test
     fun `the advertised AID matches what the reader selects`() {
-        assertThat(BeamApdu.AID_HEX).isEqualTo("F04265616D01")
+        // The AID is declared twice - once as bytes for the reader, once as a string the
+        // manifest registers with the platform - and they are set per build type. If they ever
+        // drift apart the tap stops working on hardware and nowhere else, so pin them together
+        // rather than to a literal that is only correct for one variant.
+        assertThat(BeamApdu.AID_HEX).isEqualTo(service.getString(R.string.beam_aid))
+        assertThat(BeamApdu.AID_HEX).startsWith("F04265616D")
         assertThat(BeamApdu.isSelectAid(BeamApdu.selectCommand())).isTrue()
     }
 }
