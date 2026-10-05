@@ -53,8 +53,20 @@ class AndroidPayloadSink(
     private fun keyFor(entry: PayloadManifest.Entry, peerStableId: String) =
         PartialTransfer.keyFor(peerStableId, entry.safePath, entry.sizeBytes)
 
+    /**
+     * Whether a peer's claimed id is specific enough to key resume state against.
+     *
+     * The placeholders are what a device reports before its own identity has loaded, or when
+     * it declined to identify itself. Several phones can present the same one, and keying a
+     * partial on a shared value is how one device's half-received file gets appended to
+     * another's. Better to forgo resuming than to resume against the wrong peer.
+     */
+    private fun String.identifiesAPeer(): Boolean =
+        isNotBlank() && this != "pending" && this != "unverified" && this != "unknown"
+
     override suspend fun heldBytes(entry: PayloadManifest.Entry, peerStableId: String): Long =
         withContext(Dispatchers.IO) {
+            if (!peerStableId.identifiesAPeer()) return@withContext 0L
             val record = partials().find(keyFor(entry, peerStableId)) ?: return@withContext 0L
 
             // Trust the file, not the bookkeeping: the row could outlive the bytes if the user
@@ -71,6 +83,7 @@ class AndroidPayloadSink(
 
     override suspend fun resume(entry: PayloadManifest.Entry, peerStableId: String): PayloadSink.Resumed? =
         withContext(Dispatchers.IO) {
+            if (!peerStableId.identifiesAPeer()) return@withContext null
             val record = partials().find(keyFor(entry, peerStableId)) ?: return@withContext null
             val uri = Uri.parse(record.uri)
 
@@ -160,7 +173,8 @@ class AndroidPayloadSink(
 
         /** Blank for an anonymous peer, in which case there is nothing to resume against. */
         protected val partialKey: String? =
-            peerId.takeIf { it.isNotBlank() }?.let { PartialTransfer.keyFor(it, entry.safePath, entry.sizeBytes) }
+            peerId.takeIf { it.identifiesAPeer() }
+                ?.let { PartialTransfer.keyFor(it, entry.safePath, entry.sizeBytes) }
 
         override suspend fun commit(): String = withContext(Dispatchers.IO) {
             runCatching { stream.close() }

@@ -30,6 +30,9 @@ class BeamContainer(private val context: Context) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     val settings = BeamSettings(context)
+
+    /** Readable synchronously, because a tap cannot wait for a flow. */
+    val identity = DeviceIdentity(context)
     val database by lazy { HistoryDatabase.create(context) }
 
     /**
@@ -79,7 +82,7 @@ class BeamContainer(private val context: Context) {
     fun localDevice(): DeviceInfo {
         val snapshot = _settingsSnapshot.value
         return DeviceInfo(
-            stableId = snapshot.stableId.ifBlank { "pending" },
+            stableId = identity.stableId,
             displayName = snapshot.deviceName,
         )
     }
@@ -107,7 +110,6 @@ class BeamContainer(private val context: Context) {
     /** Starts mirroring settings and probing transports. Called once from `Application`. */
     fun warmUp() {
         scope.launch {
-            settings.ensureStableId()
             settings.state.collect {
                 _settingsSnapshot.value = it
                 // Debug builds only; a no-op in release.
