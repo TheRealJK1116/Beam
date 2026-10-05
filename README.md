@@ -79,16 +79,20 @@ simulator (verified: no `FakeTransport` in the release dex).
 
 ## Status
 
-Working on hardware. A 2.7 MB photo beamed between a Nothing A069 and a Pixel 6, both on
-Android 17: **4.78 s from tap to the file committed on the receiver**, verified byte-count
-exact on disk rather than trusted from the sender's own report.
+Working on hardware, between a Nothing A069 and a Pixel 6, both Android 17.
 
-Where that time goes: ~0.2 s to the tap and group join request, ~2.9 s for Wi-Fi Direct group
-formation, DHCP and the socket handshake, ~1.3 s waiting for the human to press Accept, and
-0.42 s of actual transfer. Group formation dominates, so that is where any speed work belongs.
+Verified end to end:
 
-89 unit tests cover the protocol, the HCE card side, the stream framing, the history DAO and a
-full in-process beam.
+- **A closed phone receives.** Beam swiped away from recents still answers a tap: the platform
+  binds its HCE service, which mints a session and starts the transfer. No app open, no
+  account, no internet.
+- **No pairing dialog, no Play Services, no Bluetooth.** Wi-Fi Direct wins the transport race;
+  both phones derive the same group credentials from the tap.
+- **Tap to done in about 5 seconds** for a small payload, of which roughly 2 are the human
+  reading the confirmation. A 2.7 MB photo moved in 0.4 s once connected.
+- **Byte-exact delivery**, checked on disk rather than trusted from the sender's report.
+- **Permissions ask for themselves** from a clean install, including the permanently-denied
+  case where the platform silently stops showing prompts.
 
 ### Things learned the hard way
 
@@ -117,9 +121,17 @@ wins and the rest are cancelled.
 
 ### Known gaps
 
-- Group formation is the bulk of the latency (~2.9 s of 4.78 s) and has not been optimised.
+- **The Nearby fallback has none of the v2 guarantees** — no per-file digests, no resume, no
+  folder paths — while the session token advertises protocol 2. The receiver listens on both
+  radios, so which guarantees apply depends on which one wins. Wi-Fi Direct wins in practice,
+  but that is luck rather than design.
+- **Release builds are unsigned.** There is no signing config; `assembleRelease` produces an
+  unsigned APK that nobody can install.
+- Group formation dominates the latency and has not been optimised.
 - The Nearby backend's connection handling has no automated coverage; only the frame protocol,
   identity encoding and error mapping do.
+- Resume is implemented and unit-tested but has never been exercised against a genuinely
+  interrupted transfer on hardware.
 
 ### Not doing
 
