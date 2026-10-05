@@ -497,7 +497,7 @@ class WifiDirectTransport(
                 emit(TransferEvent.Progress(sent, manifest.totalBytes))
             }
             } catch (io: java.io.IOException) {
-                val reason = pendingAbort(input)
+                val reason = pendingAbort(socket, input)
                 emit(TransferEvent.Failed(reason ?: TransferError.Io(io.message ?: "The transfer was cut off")))
                 return
             }
@@ -528,10 +528,15 @@ class WifiDirectTransport(
      * the abort sits unread in the socket buffer until the write fails. Reading it here turns
      * "the connection broke" into the reason the receiver actually gave.
      */
-    private fun pendingAbort(input: java.io.InputStream): TransferError? = runCatching {
+    private fun pendingAbort(socket: Socket, input: java.io.InputStream): TransferError? = runCatching {
+        // Only whatever is already buffered is of interest. The connection has just failed,
+        // so the peer may never send anything again - draining it at the full read timeout
+        // would hang the transfer for minutes instead of failing it promptly.
+        socket.soTimeout = ABORT_DRAIN_MILLIS
+
         var frame = BeamFrames.read(input)
         var guard = 0
-        while (frame != null && frame.type != BeamFrames.ABORT && guard++ < 8) {
+        while (frame != null && frame.type != BeamFrames.ABORT && guard++ < 4) {
             frame = BeamFrames.read(input)
         }
         frame?.takeIf { it.type == BeamFrames.ABORT }?.let { abortReason(it.body) }
@@ -578,6 +583,9 @@ class WifiDirectTransport(
         /** Guards against a peer that connects and then goes quiet mid-transfer. */
         val READ_TIMEOUT: Duration = 60.seconds
         const val SOCKET_ATTEMPT_MILLIS = 1_500
+
+        /** A failed connection gets a moment to explain itself, not a full read timeout. */
+        const val ABORT_DRAIN_MILLIS = 1_500
         const val RETRY_INTERVAL_MILLIS = 400L
 
         /**

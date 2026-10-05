@@ -93,6 +93,10 @@ Verified end to end:
 - **Byte-exact delivery**, checked on disk rather than trusted from the sender's report.
 - **Permissions ask for themselves** from a clean install, including the permanently-denied
   case where the platform silently stops showing prompts.
+- **Resume survives a real interruption.** An 8 MB transfer cut at 524,288 bytes was picked up
+  by the next tap (`Resuming 1 file(s): {0=524288}`) and the stitched file hashed identical to
+  the original — which is the only check that catches a plausible-looking but wrongly joined
+  file.
 
 ### Things learned the hard way
 
@@ -134,13 +138,10 @@ wins and the rest are cancelled.
 
 ### Known gaps
 
-- **Release builds are unsigned.** There is no signing config; `assembleRelease` produces an
-  unsigned APK that nobody can install.
 - Group formation dominates the latency and has not been optimised.
 - The Nearby backend's connection handling has no automated coverage; only the frame protocol,
   identity encoding and error mapping do.
-- Resume is implemented and unit-tested but has never been exercised against a genuinely
-  interrupted transfer on hardware.
+- Release builds are unsigned, so nobody else can install one.
 
 ### Not doing
 
