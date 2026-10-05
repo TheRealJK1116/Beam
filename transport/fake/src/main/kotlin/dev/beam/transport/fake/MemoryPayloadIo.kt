@@ -47,8 +47,10 @@ class MemoryPayloadSink : PayloadSink {
     val received: Map<String, ByteArray> get() = committed.toMap()
     val discardedNames: List<String> get() = synchronized(discarded) { discarded.toList() }
 
-    override suspend fun create(entry: PayloadManifest.Entry): PayloadSink.Destination =
-        MemoryDestination(entry.name)
+    override suspend fun create(
+        entry: PayloadManifest.Entry,
+        peerStableId: String,
+    ): PayloadSink.Destination = MemoryDestination(entry.safePath)
 
     override suspend fun acceptText(manifest: PayloadManifest, text: String): String {
         committed["text"] = text.toByteArray(Charsets.UTF_8)
@@ -67,5 +69,8 @@ class MemoryPayloadSink : PayloadSink {
         override suspend fun discard() {
             synchronized(discarded) { discarded += name }
         }
+
+        /** The simulator does not persist, so a kept partial is just a discarded one. */
+        override suspend fun retain(bytesWritten: Long) = discard()
     }
 }

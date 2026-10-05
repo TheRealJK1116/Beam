@@ -186,6 +186,18 @@ class WifiDirectTransport(
         }
         BeamFrames.write(output, BeamFrames.ACCEPT)
 
+        // 3b. Tell the sender what we already have from an interrupted attempt, so it can
+        // skip ahead instead of re-sending gigabytes over a link that already proved flaky.
+        val held = mutableMapOf<Int, Long>()
+        if (manifest.kind == PayloadManifest.Kind.FILES) {
+            manifest.files.forEachIndexed { index, entry ->
+                val bytes = runCatching { sink.heldBytes(entry, peer.stableId) }.getOrDefault(0L)
+                if (bytes in 1 until entry.sizeBytes) held[index] = bytes
+            }
+        }
+        BeamFrames.write(output, BeamFrames.RESUME_OFFER, BeamFrames.resumeOffer(held))
+        if (held.isNotEmpty()) Log.i(TAG, "Resuming ${held.size} file(s): $held")
+
         // 4. The bytes.
         val startedAt = System.currentTimeMillis()
         emit(TransferEvent.Started(manifest.totalBytes, peer))
@@ -212,9 +224,26 @@ class WifiDirectTransport(
 
                     emit(TransferEvent.FileStarted(header.index, entry.name, manifest.files.size))
 
-                    val destination = sink.create(entry)
-                    val alreadyDone = completedBytes
                     val digest = BeamFrames.sha256()
+
+                    // A non-zero offset means the sender accepted our resume offer.
+                    val resumed = if (header.offset > 0) sink.resume(entry, peer.stableId) else null
+                    val destination = if (resumed != null && resumed.bytesHeld == header.offset) {
+                        // Fold the bytes already on disk into the digest, so the final
+                        // comparison still covers the whole file rather than just this run.
+                        resumed.openHeld().use { BeamFrames.digestExactly(it, header.offset, digest) }
+                        resumed
+                    } else {
+                        runCatching { resumed?.discard() }
+                        if (header.offset > 0) {
+                            // We offered a resume the sender took, but cannot honour it.
+                            throw IllegalStateException("cannot resume ${entry.name} from ${header.offset}")
+                        }
+                        sink.create(entry, peer.stableId)
+                    }
+
+                    val alreadyDone = completedBytes
+                    var writtenThisRun = 0L
 
                     val ok = runCatching {
                         destination.stream.use { out ->
@@ -225,24 +254,36 @@ class WifiDirectTransport(
                                 digest = digest,
                                 onProgress = { moved ->
                                     // Throttled: a gigabyte at 64 KB a time is 16k callbacks.
-                                    emitProgress(TransferEvent.Progress(alreadyDone + moved, manifest.totalBytes))
+                                    writtenThisRun = moved
+                                    emitProgress(
+                                        TransferEvent.Progress(
+                                            alreadyDone + header.offset + moved,
+                                            manifest.totalBytes,
+                                        )
+                                    )
                                 },
                             )
                         }
                     }
                     if (ok.isFailure) {
-                        destination.discard()
+                        // The bytes that did land are good; keep them for the next attempt
+                        // rather than throwing away the whole file.
+                        destination.retain(header.offset + writtenThisRun)
                         throw ok.exceptionOrNull()!!
                     }
 
                     // The sender's digest of the whole file follows the body.
                     val trailer = BeamFrames.read(input)
                     if (trailer?.type != BeamFrames.FILE_DIGEST) {
-                        destination.discard()
+                        destination.retain(header.offset + writtenThisRun)
                         throw IllegalStateException("no digest followed ${entry.name}")
                     }
                     if (!trailer.body.contentEquals(digest.digest())) {
+                        // Known-bad bytes: delete rather than retain, or every later resume
+                        // would build on corruption.
                         destination.discard()
+                        // Tell the sender rather than letting it wait out its timeout.
+                        runCatching { BeamFrames.write(output, BeamFrames.AUTH_FAIL) }
                         emit(TransferEvent.Failed(TransferError.IntegrityFailed(entry.name)))
                         return
                     }
@@ -373,6 +414,15 @@ class WifiDirectTransport(
             return
         }
 
+        // 3b. What the receiver already holds, if anything.
+        val resumeFrame = withTimeoutOrNull(HANDSHAKE_TIMEOUT) { BeamFrames.read(input) }
+        val held = if (resumeFrame?.type == BeamFrames.RESUME_OFFER) {
+            BeamFrames.parseResumeOffer(resumeFrame.body)
+        } else {
+            emptyMap()
+        }
+        if (held.isNotEmpty()) Log.i(TAG, "Receiver already holds $held")
+
         // 3. The bytes.
         val startedAt = System.currentTimeMillis()
         emit(TransferEvent.Started(manifest.totalBytes, token.device))
@@ -383,18 +433,31 @@ class WifiDirectTransport(
                 val entry = manifest.files[index]
                 emit(TransferEvent.FileStarted(index, entry.name, payload.files.size))
 
-                BeamFrames.write(output, BeamFrames.FILE_HEADER, BeamFrames.fileHeader(index, entry.sizeBytes))
+                // Never trust the offer past the end of our own file.
+                val offset = (held[index] ?: 0L).coerceIn(0L, entry.sizeBytes)
+                BeamFrames.write(
+                    output,
+                    BeamFrames.FILE_HEADER,
+                    BeamFrames.fileHeader(index, entry.sizeBytes, offset),
+                )
 
                 val alreadySent = sent
                 val digest = BeamFrames.sha256()
                 source.open(ref).use { fileStream ->
+                    // The skipped prefix still has to be hashed - the trailer covers the whole
+                    // file - but it is read from local disk rather than sent over the air,
+                    // which is the entire point of resuming.
+                    if (offset > 0) BeamFrames.digestExactly(fileStream, offset, digest)
+
                     BeamFrames.copyExactly(
                         input = fileStream,
                         output = output,
-                        count = entry.sizeBytes,
+                        count = entry.sizeBytes - offset,
                         digest = digest,
                         onProgress = { moved ->
-                            emitProgress(TransferEvent.Progress(alreadySent + moved, manifest.totalBytes))
+                            emitProgress(
+                                TransferEvent.Progress(alreadySent + offset + moved, manifest.totalBytes)
+                            )
                         },
                     )
                 }
@@ -433,6 +496,7 @@ class WifiDirectTransport(
 
         val CONNECT_TIMEOUT: Duration = 20.seconds
         val ACCEPT_TIMEOUT: Duration = 30.seconds
+        val HANDSHAKE_TIMEOUT: Duration = 15.seconds
 
         /** How long the sender waits for the receiver to confirm after the last byte. */
         val DELIVERY_TIMEOUT: Duration = 60.seconds

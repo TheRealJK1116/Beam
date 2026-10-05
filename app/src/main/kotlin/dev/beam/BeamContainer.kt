@@ -66,7 +66,7 @@ class BeamContainer(private val context: Context) {
     )
 
     val payloadSource = AndroidPayloadSource(context)
-    val payloadSink = AndroidPayloadSink(context)
+    val payloadSink = AndroidPayloadSink(context) { database.partials() }
 
     val coordinator = TransferCoordinator(
         registry = registry,
