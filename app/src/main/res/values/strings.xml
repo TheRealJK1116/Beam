@@ -61,6 +61,9 @@
     <string name="perm_denied_body">Beam cannot send or receive without the nearby devices and local network permissions. You can turn them on in Settings.</string>
     <string name="perm_location_title">Turn on Location</string>
     <string name="perm_location_body">On Android 12, finding a nearby phone requires Location to be switched on. Beam never records or shares where you are.</string>
+    <string name="perm_background_title">Let Beam receive while closed</string>
+    <string name="perm_background_body">Beam answers a tap by waking up on its own, so the system has to be allowed to run it in the background. Without this, another phone tapping yours will only reach you while Beam is open on screen.</string>
+    <string name="action_allow_background">Allow background use</string>
     <string name="action_send">Send</string>
     <string name="action_grant">Grant permissions</string>
     <string name="action_open_settings">Open settings</string>

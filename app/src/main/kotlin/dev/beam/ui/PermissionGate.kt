@@ -53,10 +53,15 @@ class PermissionUiState(
     val ready: Boolean,
     val needsLocationService: Boolean,
     val canAskAgain: Boolean,
+    /** True when the system may stop Beam running while it is not on screen. */
+    val batteryRestricted: Boolean,
     private val onRequest: () -> Unit,
     private val onOpenSettings: () -> Unit,
+    private val onRequestBatteryExemption: () -> Unit,
 ) {
     fun act() = if (canAskAgain && !needsLocationService) onRequest() else onOpenSettings()
+
+    fun allowBackground() = onRequestBatteryExemption()
 }
 
 @Composable
@@ -95,11 +100,13 @@ fun rememberPermissionUiState(): PermissionUiState {
             ready = BeamPermissions.isReady(context),
             needsLocationService = locationNeeded,
             canAskAgain = canAskAgain,
+            batteryRestricted = !BeamPermissions.isExemptFromBatteryOptimisation(context),
             onRequest = {
                 val stillMissing = BeamPermissions.missingRequestable(context)
                 if (stillMissing.isNotEmpty()) launcher.launch(stillMissing.toTypedArray())
             },
             onOpenSettings = { context.openBeamSettings(locationNeeded) },
+            onRequestBatteryExemption = { context.requestBatteryExemption() },
         )
     }
 }
@@ -112,7 +119,14 @@ fun rememberPermissionUiState(): PermissionUiState {
  */
 @Composable
 fun PermissionBanner(state: PermissionUiState, modifier: Modifier = Modifier) {
-    if (state.ready) return
+    // Two tiers, and they are genuinely different. Missing permissions mean Beam cannot work
+    // at all; battery optimisation means it works while you are looking at it and quietly
+    // misses taps when you are not. Showing them as one undifferentiated warning would train
+    // the user to ignore both.
+    if (state.ready) {
+        if (state.batteryRestricted) BackgroundBanner(state, modifier)
+        return
+    }
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -153,6 +167,56 @@ fun PermissionBanner(state: PermissionUiState, modifier: Modifier = Modifier) {
             }
         }
     }
+}
+
+/**
+ * Shown once the permissions are in place but the system may still stop Beam running in the
+ * background — which is when a tap on a closed phone goes unanswered.
+ */
+@Composable
+private fun BackgroundBanner(state: PermissionUiState, modifier: Modifier = Modifier) {
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ),
+    ) {
+        Column(Modifier.padding(20.dp)) {
+            Text(
+                stringResource(R.string.perm_background_title),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                stringResource(R.string.perm_background_body),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Spacer(Modifier.height(14.dp))
+            TextButton(onClick = state::allowBackground) {
+                Text(stringResource(R.string.action_allow_background))
+            }
+        }
+    }
+}
+
+/**
+ * Asks to be exempted from battery optimisation.
+ *
+ * The direct dialog needs REQUEST_IGNORE_BATTERY_OPTIMIZATIONS and some devices refuse it
+ * outright, so it falls back to the system list where the user can pick Beam themselves.
+ */
+private fun Context.requestBatteryExemption() {
+    val direct = Intent(
+        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+        Uri.fromParts("package", packageName, null),
+    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    val fallback = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+    runCatching { startActivity(direct) }
+        .recoverCatching { startActivity(fallback) }
 }
 
 /** The app's own settings page, or the location toggle when that is what is missing. */

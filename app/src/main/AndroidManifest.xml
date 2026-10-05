@@ -86,6 +86,16 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!--
+      Lets Beam ask to be exempted from battery optimisation.
+
+      This is core functionality rather than a convenience: receiving works by the platform
+      binding BeamHceService when another phone taps this one, and a doze-restricted or
+      OEM-killed app is not there to be bound. Several manufacturers - Nothing OS among them -
+      are considerably more aggressive than stock Android about this.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
     <uses-feature
         android:name="android.hardware.nfc"
         android:required="false" />

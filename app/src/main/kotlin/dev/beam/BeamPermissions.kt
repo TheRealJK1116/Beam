@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Context
 import android.content.pm.PackageManager
 import android.location.LocationManager
+import android.os.PowerManager
 import android.os.Build
 import androidx.core.content.ContextCompat
 import androidx.core.location.LocationManagerCompat
@@ -86,6 +87,18 @@ object BeamPermissions {
     /** Everything needed to beam right now, permissions and system toggles together. */
     fun isReady(context: Context): Boolean =
         canTransfer(context) && (!isLocationServiceRequired() || isLocationServiceOn(context))
+
+    /**
+     * Whether the system will let Beam run when it is not on screen.
+     *
+     * Not required to beam while the app is open, which is why it is kept apart from
+     * [isReady] - but receiving works by the platform binding Beam's HCE service when another
+     * phone taps this one, and a doze-restricted app is not there to be bound. Without this
+     * the app has to be open for a tap to land, which defeats the point.
+     */
+    fun isExemptFromBatteryOptimisation(context: Context): Boolean =
+        ContextCompat.getSystemService(context, PowerManager::class.java)
+            ?.isIgnoringBatteryOptimizations(context.packageName) ?: false
 
     private fun isGranted(context: Context, permission: String): Boolean =
         ContextCompat.checkSelfPermission(context, permission) == PackageManager.PERMISSION_GRANTED
