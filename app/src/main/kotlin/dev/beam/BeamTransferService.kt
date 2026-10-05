@@ -72,6 +72,7 @@ class BeamTransferService : Service() {
                 acquireLocks()
                 beginReceiving(token)
                 observeStateOnce()
+                announceIncoming()
             }
         }
         return START_NOT_STICKY
@@ -240,6 +241,21 @@ class BeamTransferService : Service() {
             .setOngoing(true)
             .setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_PROGRESS)
+
+    /**
+     * Put the receive screen up the moment a tap is answered, before anything is known about
+     * what is coming.
+     *
+     * Previously nothing appeared until the manifest arrived, so a handshake that died
+     * earlier - the radios failing to meet, the sender walking away - looked exactly like
+     * Beam being broken. The screen can say "incoming" and then say why it failed; showing
+     * nothing can do neither.
+     */
+    private fun announceIncoming() {
+        val intent = Intent(this, ReceiveActivity::class.java)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
+        runCatching { startActivity(intent) }
+    }
 
     /**
      * The receiver may be looking at their lock screen, so the confirmation is a full-screen

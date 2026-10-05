@@ -141,7 +141,8 @@ wins and the rest are cancelled.
 - Group formation dominates the latency and has not been optimised.
 - The Nearby backend's connection handling has no automated coverage; only the frame protocol,
   identity encoding and error mapping do.
-- Release builds are unsigned, so nobody else can install one.
+- Resume is verified against an injected interruption, but not against a genuinely flaky
+  radio: the fault is clean and instantaneous, where a real one is noisy and gradual.
 
 ### Not doing
 

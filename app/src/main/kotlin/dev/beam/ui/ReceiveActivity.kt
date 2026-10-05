@@ -215,8 +215,17 @@ private fun ReceiveScreen(
 
                 state is HandshakeState.Failed -> {
                     Text(
+                        stringResource(R.string.receive_failed_title),
+                        style = MaterialTheme.typography.headlineMedium,
+                        textAlign = TextAlign.Center,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    // The reason, not just the fact. A beam that fails silently is
+                    // indistinguishable from an app that does not work.
+                    Text(
                         state.error.message,
-                        style = MaterialTheme.typography.headlineSmall,
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
                     )
                     Spacer(Modifier.height(24.dp))

@@ -57,6 +57,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import android.widget.Toast
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
@@ -212,7 +213,9 @@ private fun HomeScreen(
             if (history.isEmpty()) {
                 item { EmptyHistory(Modifier.height(320.dp)) }
             } else {
-                items(history, key = { it.id }) { record -> HistoryRow(record) }
+                items(history, key = { it.id }) { record ->
+                    HistoryRow(record, onOpen = { context.openReceived(record) })
+                }
             }
         }
     }
@@ -241,8 +244,13 @@ private fun EmptyHistory(modifier: Modifier = Modifier) {
 }
 
 @Composable
-private fun HistoryRow(record: TransferRecord) {
+private fun HistoryRow(record: TransferRecord, onOpen: () -> Unit) {
+    // Only a received file that still has somewhere to point can be opened; a sent file
+    // belongs to whatever app it came from, and a failed one has nothing behind it.
+    val openable = !record.outgoing && record.succeeded && !record.primaryUri.isNullOrBlank()
+
     Card(
+        modifier = if (openable) Modifier.clickable(onClick = onOpen) else Modifier,
         colors = CardDefaults.cardColors(
             containerColor = if (record.succeeded) {
                 MaterialTheme.colorScheme.surfaceContainer
@@ -360,6 +368,32 @@ private fun Context.startBeam(uris: List<Uri>) {
     }
     startActivity(intent)
 }
+
+/**
+ * Opens a received file in whatever app handles it.
+ *
+ * The URI was recorded when the file was committed and has been sitting unused ever since,
+ * which meant Beam could tell you something had arrived but not show it to you.
+ */
+private fun Context.openReceived(record: TransferRecord) {
+    val uri = record.primaryUri?.takeIf { it.isNotBlank() }?.let(Uri::parse) ?: return
+    val intent = Intent(Intent.ACTION_VIEW)
+        .setDataAndType(uri, record.mimeTypeOrGuess())
+        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+
+    runCatching { startActivity(intent) }
+        .onFailure {
+            // Nothing on the device claims this type; say so rather than doing nothing.
+            Toast.makeText(this, getString(R.string.history_cannot_open), Toast.LENGTH_SHORT).show()
+        }
+}
+
+/** History stores the payload kind, not a MIME type; fall back to letting the system decide. */
+private fun TransferRecord.mimeTypeOrGuess(): String =
+    primaryUri?.substringAfterLast('.', "")
+        ?.takeIf { it.isNotBlank() }
+        ?.let { android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(it.lowercase()) }
+        ?: "*/*"
 
 /** A folder travels as its tree URI; SendActivity walks it off the main thread. */
 private fun Context.startBeamFolder(tree: Uri) {

@@ -22,12 +22,14 @@
 
     <!-- Receive -->
     <string name="receive_waiting_title">Incoming beam…</string>
+    <string name="receive_failed_title">Beam didn\'t arrive</string>
     <string name="receive_offer_title">%1$s wants to send you something</string>
     <string name="receive_receiving_title">Receiving</string>
     <string name="receive_done_title">Received</string>
     <string name="receive_done_subtitle">Saved to your Beam folder</string>
 
     <!-- Home and settings -->
+    <string name="history_cannot_open">Nothing on this phone can open that file</string>
     <string name="home_empty_title">Nothing beamed yet</string>
     <string name="home_empty_subtitle">Tap Send, or share something and pick Beam — then touch two phones together.</string>
     <string name="title_settings">Settings</string>

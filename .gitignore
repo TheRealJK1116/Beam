@@ -10,3 +10,7 @@ captures/
 *.apk
 *.keystore
 !debug.keystore
+
+# Signing material: never commit these.
+keystore.properties
+*.jks
