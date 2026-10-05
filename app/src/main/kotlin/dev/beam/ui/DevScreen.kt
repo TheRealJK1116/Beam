@@ -49,6 +49,8 @@ import dev.beam.BeamDebug
  * tap, a link that dies at 50%, a receiver that never shows up — plus a synthetic incoming tap
  * that drives the real notification, foreground service and confirmation screen on one phone.
  */
+private const val INTERRUPT_AFTER_BYTES = 512L * 1024
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DevScreen(container: BeamContainer, onBack: () -> Unit) {
@@ -94,6 +96,32 @@ fun DevScreen(container: BeamContainer, onBack: () -> Unit) {
 
             Text(
                 "Mints a real session and starts the real receive flow on this phone.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Spacer(Modifier.height(8.dp))
+            Text("Resume", style = MaterialTheme.typography.titleMedium)
+
+            var armed by remember { mutableStateOf(BeamDebug.isInterruptionArmed) }
+            FilledTonalButton(
+                onClick = {
+                    if (armed) {
+                        BeamDebug.disarmInterruption()
+                        armed = false
+                        log.add("interruption disarmed")
+                    } else {
+                        BeamDebug.armSendInterruption(INTERRUPT_AFTER_BYTES)
+                        armed = true
+                        log.add("armed: the next send will be cut after ${INTERRUPT_AFTER_BYTES / 1024} KB")
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text(if (armed) "Disarm interruption" else "Interrupt the next send") }
+
+            Text(
+                "Cuts one real transfer at a fixed offset so the next attempt has something to " +
+                    "resume from. Fires once, then disarms itself, so the retry is free to succeed.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

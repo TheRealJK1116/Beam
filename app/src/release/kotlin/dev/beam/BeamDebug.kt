@@ -29,4 +29,10 @@ object BeamDebug {
     fun simulateIncomingTap(context: Context, container: BeamContainer): Boolean = false
 
     fun setSimulationEnabled(enabled: Boolean) = Unit
+
+    fun armSendInterruption(bytes: Long) = Unit
+
+    fun disarmInterruption() = Unit
+
+    val isInterruptionArmed: Boolean get() = false
 }

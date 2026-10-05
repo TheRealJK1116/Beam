@@ -52,6 +52,16 @@ object BeamDebug {
 
     fun extraTransports(context: Context): List<Transport> = listOf(fakeTransport)
 
+    /**
+     * Cuts the next real send at [bytes], so resume can be tested against an interruption at
+     * a known offset rather than by pulling two phones apart and hoping.
+     */
+    fun armSendInterruption(bytes: Long) = dev.beam.core.transport.BeamFaults.armSendInterruption(bytes)
+
+    fun disarmInterruption() = dev.beam.core.transport.BeamFaults.disarm()
+
+    val isInterruptionArmed: Boolean get() = dev.beam.core.transport.BeamFaults.isArmed
+
     /** A photo-sized payload, so timings mean something. */
     private const val PHOTO_BYTES = 4 * 1024 * 1024
 

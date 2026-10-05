@@ -16,6 +16,7 @@ import dev.beam.core.model.TransferEvent
 import dev.beam.core.model.TransportId
 import dev.beam.core.session.SessionAuth
 import dev.beam.core.session.SessionToken
+import dev.beam.core.transport.BeamFaults
 import dev.beam.core.transport.BeamFrames
 import dev.beam.core.transport.PayloadSink
 import dev.beam.core.transport.PayloadSource
@@ -481,6 +482,8 @@ class WifiDirectTransport(
                         count = entry.sizeBytes - offset,
                         digest = digest,
                         onProgress = { moved ->
+                            // Debug builds only; never armed in release.
+                            BeamFaults.checkSendProgress(offset + moved)
                             emitProgress(
                                 TransferEvent.Progress(alreadySent + offset + moved, manifest.totalBytes)
                             )
