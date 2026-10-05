@@ -188,11 +188,21 @@ class WifiDirectTransport(
 
         // 3b. Tell the sender what we already have from an interrupted attempt, so it can
         // skip ahead instead of re-sending gigabytes over a link that already proved flaky.
+        // Resolved once and held, rather than asked about now and reopened later: checking
+        // then reopening is a race where the second look can disagree with the first, delete
+        // the partial, and abort a transfer whose bytes have just been destroyed.
+        val resumable = mutableMapOf<Int, PayloadSink.Resumed>()
         val held = mutableMapOf<Int, Long>()
         if (manifest.kind == PayloadManifest.Kind.FILES) {
             manifest.files.forEachIndexed { index, entry ->
-                val bytes = runCatching { sink.heldBytes(entry, peer.stableId) }.getOrDefault(0L)
-                if (bytes in 1 until entry.sizeBytes) held[index] = bytes
+                val partial = runCatching { sink.resume(entry, peer.stableId) }.getOrNull() ?: return@forEachIndexed
+                if (partial.bytesHeld in 1 until entry.sizeBytes) {
+                    resumable[index] = partial
+                    held[index] = partial.bytesHeld
+                } else {
+                    // Useless to us; close it rather than leaving the stream open.
+                    runCatching { partial.retain(partial.bytesHeld) }
+                }
             }
         }
         BeamFrames.write(output, BeamFrames.RESUME_OFFER, BeamFrames.resumeOffer(held))
@@ -226,19 +236,24 @@ class WifiDirectTransport(
 
                     val digest = BeamFrames.sha256()
 
-                    // A non-zero offset means the sender accepted our resume offer.
-                    val resumed = if (header.offset > 0) sink.resume(entry, peer.stableId) else null
-                    val destination = if (resumed != null && resumed.bytesHeld == header.offset) {
+                    // A non-zero offset means the sender took the resume we offered, which
+                    // is already open and whose length we have already committed to.
+                    val resumed = resumable.remove(header.index)
+                    val destination = if (header.offset > 0L) {
+                        if (resumed == null || resumed.bytesHeld != header.offset) {
+                            // The sender invented an offset we never offered. Keep whatever
+                            // we hold - it is not the partial's fault - and abort.
+                            runCatching { resumed?.retain(resumed.bytesHeld) }
+                            abort(output, "resume offset ${header.offset} was never offered")
+                            throw IllegalStateException("cannot resume ${entry.name} from ${header.offset}")
+                        }
                         // Fold the bytes already on disk into the digest, so the final
                         // comparison still covers the whole file rather than just this run.
                         resumed.openHeld().use { BeamFrames.digestExactly(it, header.offset, digest) }
                         resumed
                     } else {
+                        // Sender chose to start over; the old partial is superseded.
                         runCatching { resumed?.discard() }
-                        if (header.offset > 0) {
-                            // We offered a resume the sender took, but cannot honour it.
-                            throw IllegalStateException("cannot resume ${entry.name} from ${header.offset}")
-                        }
                         sink.create(entry, peer.stableId)
                     }
 
@@ -282,8 +297,8 @@ class WifiDirectTransport(
                         // Known-bad bytes: delete rather than retain, or every later resume
                         // would build on corruption.
                         destination.discard()
-                        // Tell the sender rather than letting it wait out its timeout.
-                        runCatching { BeamFrames.write(output, BeamFrames.AUTH_FAIL) }
+                        abort(output, "${entry.name} failed its integrity check")
+                        releaseUnused(resumable)
                         emit(TransferEvent.Failed(TransferError.IntegrityFailed(entry.name)))
                         return
                     }
@@ -296,6 +311,9 @@ class WifiDirectTransport(
                 else -> Unit
             }
         }
+
+        // Anything we offered but the sender skipped stays on disk for another day.
+        releaseUnused(resumable)
 
         // Everything is committed; release the sender.
         BeamFrames.write(output, BeamFrames.RECEIVED)
@@ -342,6 +360,11 @@ class WifiDirectTransport(
 
             socket.use { connection ->
                 connection.tcpNoDelay = true
+                // Without this the sender's withTimeoutOrNull guards are decorative:
+                // BeamFrames.read blocks in a socket read, which coroutine cancellation
+                // cannot interrupt, so a receiver that goes quiet would pin this thread -
+                // and the wake lock, Wi-Fi lock and P2P group with it - indefinitely.
+                connection.soTimeout = READ_TIMEOUT.inWholeMilliseconds.toInt()
                 sendOver(connection, token, payload, source, { send(it) }, { trySend(it) })
             }
         } catch (t: Throwable) {
@@ -429,6 +452,9 @@ class WifiDirectTransport(
 
         var sent = 0L
         if (payload is BeamPayload.Files) {
+            // A write failing mid-file usually means the receiver hung up; it may have told
+            // us why first, so look before reporting a generic I/O error.
+            try {
             payload.files.forEachIndexed { index, ref ->
                 val entry = manifest.files[index]
                 emit(TransferEvent.FileStarted(index, entry.name, payload.files.size))
@@ -467,6 +493,11 @@ class WifiDirectTransport(
                 sent += entry.sizeBytes
                 emit(TransferEvent.Progress(sent, manifest.totalBytes))
             }
+            } catch (io: java.io.IOException) {
+                val reason = pendingAbort(input)
+                emit(TransferEvent.Failed(reason ?: TransferError.Io(io.message ?: "The transfer was cut off")))
+                return
+            }
         }
 
         BeamFrames.write(output, BeamFrames.DONE)
@@ -476,11 +507,51 @@ class WifiDirectTransport(
         val confirmation = withTimeoutOrNull(DELIVERY_TIMEOUT) {
             runCatching { BeamFrames.read(input) }.getOrNull()
         }
+        if (confirmation?.type == BeamFrames.ABORT) {
+            emit(TransferEvent.Failed(abortReason(confirmation.body)))
+            return
+        }
         if (confirmation?.type != BeamFrames.RECEIVED) {
             emit(TransferEvent.Failed(TransferError.Io("The other phone did not confirm it received everything")))
             return
         }
         emit(TransferEvent.Completed(System.currentTimeMillis() - startedAt))
+    }
+
+    /**
+     * Drains whatever the receiver managed to say before hanging up.
+     *
+     * When a file fails its integrity check mid-folder the sender is writing, not reading, so
+     * the abort sits unread in the socket buffer until the write fails. Reading it here turns
+     * "the connection broke" into the reason the receiver actually gave.
+     */
+    private fun pendingAbort(input: java.io.InputStream): TransferError? = runCatching {
+        var frame = BeamFrames.read(input)
+        var guard = 0
+        while (frame != null && frame.type != BeamFrames.ABORT && guard++ < 8) {
+            frame = BeamFrames.read(input)
+        }
+        frame?.takeIf { it.type == BeamFrames.ABORT }?.let { abortReason(it.body) }
+    }.getOrNull()
+
+    private fun abortReason(body: ByteArray): TransferError {
+        val text = body.toString(Charsets.UTF_8).filter { !it.isISOControl() }.take(120)
+        return if (text.contains("integrity")) {
+            TransferError.IntegrityFailed(text.substringBefore(" failed").ifBlank { "A file" })
+        } else {
+            TransferError.Io(text.ifBlank { "The other phone stopped the transfer" })
+        }
+    }
+
+    /** Tells the peer why we are stopping, so it reports the real reason rather than a timeout. */
+    private fun abort(output: java.io.OutputStream, reason: String) {
+        runCatching { BeamFrames.write(output, BeamFrames.ABORT, reason.take(200).toByteArray(Charsets.UTF_8)) }
+    }
+
+    /** Closes resumed partials we opened but never used, keeping their bytes. */
+    private suspend fun releaseUnused(resumable: MutableMap<Int, PayloadSink.Resumed>) {
+        resumable.values.forEach { runCatching { it.retain(it.bytesHeld) } }
+        resumable.clear()
     }
 
     private fun unavailable(reason: String) = TransferEvent.Failed(

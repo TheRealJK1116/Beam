@@ -201,34 +201,46 @@ class TransferCoordinator(
             val winner = AtomicReference<TransportId?>(null)
 
             coroutineScope {
-                val listeners = mutableListOf<Job>()
+                /*
+                 * Keyed by transport rather than indexed in parallel with `candidates`.
+                 *
+                 * The listeners used to live in a plain ArrayList that the launching
+                 * coroutine appended to while the children iterated it: an unsynchronised
+                 * list shared across a multi-threaded dispatcher, and an index
+                 * correspondence that only held once every launch had happened. A transport
+                 * that won the race early saw a short list and cancelled nobody, leaving the
+                 * losing radio advertising with its own socket bound for the whole transfer.
+                 */
+                val listeners = java.util.concurrent.ConcurrentHashMap<TransportId, Job>()
+
                 candidates.forEach { transport ->
-                    listeners += launch {
+                    listeners[transport.id] = launch {
                         events(transport).collect { event ->
                             // The first transport to produce a real peer owns the beam.
                             val claims = event is TransferEvent.ManifestOffered ||
                                 event is TransferEvent.Started
-                            if (claims) {
-                                if (!winner.compareAndSet(null, transport.id) &&
-                                    winner.get() != transport.id
-                                ) {
-                                    return@collect
-                                }
+                            if (claims && winner.compareAndSet(null, transport.id)) {
                                 Log.i(TAG, "${transport.id} won the beam")
-                                listeners.filterIndexed { i, _ -> candidates[i].id != transport.id }
-                                    .forEach { it.cancel() }
+                                // Cancel by id. A listener not yet registered will see the
+                                // winner already set and stop itself on its first event.
+                                listeners.forEach { (id, job) -> if (id != transport.id) job.cancel() }
                             }
 
-                            val current = winner.get()
-                            if (current == null) {
-                                // Nobody has claimed it yet: only progress-free status events
-                                // can arrive here, and a failure from one radio should not
-                                // kill a beam another is still working on.
-                                if (event !is TransferEvent.Failed || candidates.size == 1) {
-                                    dispatch(event.toHandshakeEvent())
+                            when (winner.get()) {
+                                null ->
+                                    // Nobody has claimed it yet: a failure from one radio must
+                                    // not kill a beam another is still working on.
+                                    if (event !is TransferEvent.Failed || candidates.size == 1) {
+                                        dispatch(event.toHandshakeEvent())
+                                    }
+
+                                transport.id -> dispatch(event.toHandshakeEvent())
+
+                                // Another transport owns this beam; fall silent and stop.
+                                else -> {
+                                    listeners[transport.id]?.cancel()
+                                    return@collect
                                 }
-                            } else if (current == transport.id) {
-                                dispatch(event.toHandshakeEvent())
                             }
                         }
                     }

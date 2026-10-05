@@ -61,6 +61,15 @@ object BeamFrames {
      */
     const val RESUME_OFFER: Byte = 0x0B
 
+    /**
+     * Either side, at any point: this transfer is over and why.
+     *
+     * Distinct from AUTH_FAIL, which means only "you are not who you claim". Overloading that
+     * for a mid-stream integrity failure left the sender reporting "the other phone did not
+     * confirm" when the receiver knew precisely that a file had arrived damaged.
+     */
+    const val ABORT: Byte = 0x0C
+
     const val DIGEST_BYTES = 32
 
     /** SHA-256: the fixed-size prefix of an AUTH frame, followed by the sender's stable id. */
@@ -196,7 +205,9 @@ object BeamFrames {
         if (body.size < 4) return emptyMap()
         var count = 0
         for (i in 0 until 4) count = (count shl 8) or (body[i].toInt() and 0xFF)
-        if (count < 0 || 4 + count * 12 > body.size) return emptyMap()
+        // count is four peer-controlled bytes: 201 million would overflow `count * 12` to a
+        // negative Int, sail past the bounds check and then index off the end of the array.
+        if (count < 0 || 4L + count.toLong() * 12L > body.size.toLong()) return emptyMap()
 
         val held = mutableMapOf<Int, Long>()
         var at = 4

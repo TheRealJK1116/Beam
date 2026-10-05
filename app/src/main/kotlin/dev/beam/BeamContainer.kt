@@ -84,6 +84,26 @@ class BeamContainer(private val context: Context) {
         )
     }
 
+    /**
+     * Drops partials nobody came back for.
+     *
+     * A retained partial is an invisible pending MediaStore item: it does not appear in the
+     * gallery, so a user can neither see nor delete it. Without an expiry, every abandoned
+     * transfer would quietly consume storage forever.
+     */
+    private suspend fun expireStalePartials() {
+        runCatching {
+            val dao = database.partials()
+            val cutoff = System.currentTimeMillis() - PARTIAL_LIFETIME_MILLIS
+            dao.olderThan(cutoff).forEach { stale ->
+                runCatching {
+                    context.contentResolver.delete(android.net.Uri.parse(stale.uri), null, null)
+                }
+                dao.remove(stale.key)
+            }
+        }
+    }
+
     /** Starts mirroring settings and probing transports. Called once from `Application`. */
     fun warmUp() {
         scope.launch {
@@ -96,6 +116,7 @@ class BeamContainer(private val context: Context) {
             }
         }
         scope.launch { refreshTransportAvailability() }
+        scope.launch { expireStalePartials() }
     }
 
     suspend fun refreshTransportAvailability() {
@@ -146,5 +167,8 @@ class BeamContainer(private val context: Context) {
 
     private companion object {
         const val TAG = "BeamContainer"
+
+        /** How long an interrupted transfer stays resumable before its bytes are reclaimed. */
+        const val PARTIAL_LIFETIME_MILLIS = 7L * 24 * 60 * 60 * 1000
     }
 }

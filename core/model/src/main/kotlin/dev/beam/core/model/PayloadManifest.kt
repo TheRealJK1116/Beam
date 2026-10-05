@@ -35,8 +35,20 @@ data class PayloadManifest(
                 .replace('\\', '/')
                 .split('/')
                 .mapNotNull { segment -> segment.trim().takeIf { it.isNotEmpty() && it != "." && it != ".." } }
+                // A peer can nest as deep as it likes otherwise; the cap keeps a hostile
+                // manifest from building a thousand-deep tree under the Beam folder.
+                .take(MAX_DEPTH)
                 .joinToString("/")
-                .ifBlank { name.substringAfterLast('/').ifBlank { "beam_file" } }
+                // The fallback has to sanitise too. It previously stripped only forward
+                // slashes, so a relativePath of "." with a backslash-laden name passed
+                // straight through the one function whose job is to make this safe.
+                .ifBlank {
+                    name.substringAfterLast('/').substringAfterLast('\\').ifBlank { "beam_file" }
+                }
+
+        private companion object {
+            const val MAX_DEPTH = 16
+        }
     }
 
     val totalBytes: Long

@@ -58,7 +58,7 @@ class BeamTransferService : Service() {
                 // this exists purely to keep the process alive and the radios awake.
                 startAsForeground(sendingNotification())
                 acquireLocks()
-                observeState()
+                observeStateOnce()
             }
 
             else -> {
@@ -71,7 +71,7 @@ class BeamTransferService : Service() {
                 startAsForeground(waitingNotification())
                 acquireLocks()
                 beginReceiving(token)
-                observeState()
+                observeStateOnce()
             }
         }
         return START_NOT_STICKY
@@ -84,19 +84,29 @@ class BeamTransferService : Service() {
      * A multi-gigabyte transfer outlasts the screen timeout. Without these the CPU sleeps and
      * the Wi-Fi chip powers down mid-stream, which the peer sees as the connection dying.
      */
+    private var locksAcquired = false
+
     private fun acquireLocks() {
-        if (wakeLock != null) return
+        // Guarding on `wakeLock != null` was wrong: if that half threw or returned null, a
+        // second call ran the body again and overwrote an already-acquired Wi-Fi lock,
+        // leaking it for the life of the process. Each lock is also taken independently, so
+        // one failing no longer silently costs us the other.
+        if (locksAcquired) return
+        locksAcquired = true
+
         runCatching {
             val power = getSystemService(android.os.PowerManager::class.java)
             wakeLock = power?.newWakeLock(android.os.PowerManager.PARTIAL_WAKE_LOCK, "beam:transfer")
                 ?.apply { acquire(MAX_TRANSFER_MILLIS) }
+        }.onFailure { android.util.Log.w(TAG, "Could not hold a wake lock; a long transfer may stall", it) }
 
+        runCatching {
             val wifi = applicationContext.getSystemService(android.net.wifi.WifiManager::class.java)
             wifiLock = wifi?.createWifiLock(
                 android.net.wifi.WifiManager.WIFI_MODE_FULL_LOW_LATENCY,
                 "beam:transfer",
             )?.apply { acquire() }
-        }
+        }.onFailure { android.util.Log.w(TAG, "Could not hold a Wi-Fi lock; the radio may sleep", it) }
     }
 
     private fun releaseLocks() {
@@ -104,6 +114,7 @@ class BeamTransferService : Service() {
         runCatching { wifiLock?.takeIf { it.isHeld }?.release() }
         wakeLock = null
         wifiLock = null
+        locksAcquired = false
     }
 
     private fun sendingNotification(): Notification =
@@ -122,6 +133,19 @@ class BeamTransferService : Service() {
         }
     }
 
+    private var observing = false
+
+    /**
+     * A send guard followed by a receive start - or any redelivery - used to launch a second
+     * pair of collectors into the same long-lived scope, which meant duplicate progress
+     * notifications and, worse, a second full-screen ReceiveActivity for one incoming beam.
+     */
+    private fun observeStateOnce() {
+        if (observing) return
+        observing = true
+        observeState()
+    }
+
     private fun observeState() {
         scope.launch {
             container.coordinator.pendingDecision.collectLatest { pending ->
@@ -133,7 +157,14 @@ class BeamTransferService : Service() {
                 when (state) {
                     is HandshakeState.Transferring -> notify(transferNotification(state))
                     is HandshakeState.Complete -> {
-                        notifyResult(getString(R.string.notif_received_title), state.peer.displayName)
+                        // The same service now guards sending, so this has to know which way
+                        // the bytes went.
+                        val title = if (state.role == dev.beam.core.session.Role.SENDER) {
+                            getString(R.string.notif_sent_title)
+                        } else {
+                            getString(R.string.notif_received_title)
+                        }
+                        notifyResult(title, state.peer.displayName)
                         finish()
                     }
                     is HandshakeState.Failed -> {
@@ -262,6 +293,7 @@ class BeamTransferService : Service() {
     }
 
     companion object {
+        private const val TAG = "BeamService"
         private const val EXTRA_TOKEN = "dev.beam.extra.TOKEN"
         private const val ACTION_SEND_GUARD = "dev.beam.action.SEND_GUARD"
 

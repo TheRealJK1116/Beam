@@ -52,11 +52,17 @@ object IntentPayloads {
     private fun folder(context: Context, treeUri: Uri): BeamPayload? {
         val root = DocumentFile.fromTreeUri(context, treeUri) ?: return null
         val files = mutableListOf<FileRef>()
-        collect(root, prefix = root.name?.takeIf { it.isNotBlank() } ?: "folder", depth = 0, into = files)
+        collect(context, root, prefix = root.name?.takeIf { it.isNotBlank() } ?: "folder", depth = 0, into = files)
         return if (files.isEmpty()) null else BeamPayload.Files(files)
     }
 
-    private fun collect(dir: DocumentFile, prefix: String, depth: Int, into: MutableList<FileRef>) {
+    private fun collect(
+        context: Context,
+        dir: DocumentFile,
+        prefix: String,
+        depth: Int,
+        into: MutableList<FileRef>,
+    ) {
         if (depth > MAX_FOLDER_DEPTH || into.size >= MAX_FOLDER_FILES) return
 
         dir.listFiles().forEach { child ->
@@ -65,13 +71,18 @@ object IntentPayloads {
             val path = "$prefix/$name"
 
             if (child.isDirectory) {
-                collect(child, path, depth + 1, into)
+                collect(context, child, path, depth + 1, into)
             } else if (child.isFile) {
+                // DocumentFile.length() is also 0 for providers with no size column.
+                val length = child.length().takeIf { it > 0 } ?: runCatching {
+                    context.contentResolver.openFileDescriptor(child.uri, "r")?.use { it.statSize }
+                }.getOrNull() ?: 0L
+
                 into += FileRef(
                     uri = child.uri.toString(),
                     name = name,
                     mimeType = child.type ?: "application/octet-stream",
-                    sizeBytes = child.length(),
+                    sizeBytes = length,
                     relativePath = path,
                 )
             }
@@ -119,6 +130,15 @@ object IntentPayloads {
                         if (sizeColumn >= 0 && !cursor.isNull(sizeColumn)) size = cursor.getLong(sizeColumn)
                     }
                 }
+        }
+
+        // Many providers expose no SIZE column. Treating that as a zero-byte file means the
+        // sender streams nothing, both sides hash nothing, the digests agree, and an empty
+        // file is committed as "integrity verified". Fall back to the real descriptor.
+        if (size <= 0L) {
+            size = runCatching {
+                resolver.openFileDescriptor(uri, "r")?.use { it.statSize }
+            }.getOrNull()?.coerceAtLeast(0L) ?: 0L
         }
 
         val mimeType = resolver.getType(uri)

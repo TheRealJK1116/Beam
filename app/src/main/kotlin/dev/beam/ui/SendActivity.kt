@@ -136,7 +136,12 @@ class SendActivity : ComponentActivity() {
 
     private fun resolvePayload(source: android.content.Intent) {
         lifecycleScope.launch {
-            val resolved = IntentPayloads.from(this@SendActivity, source)
+            // A revoked SAF grant throws SecurityException from deep inside the folder walk.
+            // Uncaught in a bare launch that takes the whole activity down, when the right
+            // answer is the "nothing to send" state the screen already knows how to show.
+            val resolved = runCatching { IntentPayloads.from(this@SendActivity, source) }
+                .onFailure { android.util.Log.w("BeamSend", "Could not read what was shared", it) }
+                .getOrNull()
             payload.value = resolved
             resolveError.value = resolved == null
         }

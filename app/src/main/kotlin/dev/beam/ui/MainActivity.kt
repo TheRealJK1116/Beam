@@ -371,6 +371,13 @@ private fun Context.startBeam(uris: List<Uri>) {
 
 /** A folder travels as its tree URI; SendActivity walks it off the main thread. */
 private fun Context.startBeamFolder(tree: Uri) {
+    // The picker's grant is transient and dies with the process. Taking it persistably means
+    // a SendActivity restored from the task stack can still read the folder instead of
+    // throwing SecurityException halfway through enumerating it.
+    runCatching {
+        contentResolver.takePersistableUriPermission(tree, Intent.FLAG_GRANT_READ_URI_PERMISSION)
+    }
+
     startActivity(
         Intent(this, SendActivity::class.java).apply {
             action = Intent.ACTION_SEND
