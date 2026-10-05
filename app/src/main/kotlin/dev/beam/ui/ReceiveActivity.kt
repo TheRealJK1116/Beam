@@ -20,6 +20,7 @@ import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -71,6 +72,12 @@ class ReceiveActivity : ComponentActivity() {
                         pending?.decline()
                         finish()
                     },
+                    onCancel = {
+                        // Whatever has landed is kept, so a later tap can resume rather than
+                        // start the file again.
+                        container.coordinator.cancel()
+                        finish()
+                    },
                     onDone = { finish() },
                 )
             }
@@ -98,6 +105,7 @@ private fun ReceiveScreen(
     pending: TransferCoordinator.PendingDecision?,
     onAccept: () -> Unit,
     onDecline: () -> Unit,
+    onCancel: () -> Unit,
     onDone: () -> Unit,
 ) {
     val haptics = LocalHapticFeedback.current
@@ -197,6 +205,13 @@ private fun ReceiveScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         textAlign = TextAlign.Center,
                     )
+
+                    Spacer(Modifier.height(32.dp))
+                    // Until now a receiver could only wait: having accepted, there was no way
+                    // to stop a file you had changed your mind about.
+                    TextButton(onClick = onCancel) {
+                        Text(stringResource(R.string.action_cancel))
+                    }
                 }
 
                 state is HandshakeState.Complete -> {

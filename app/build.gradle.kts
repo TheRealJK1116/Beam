@@ -47,8 +47,12 @@ android {
         debug {
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            // Debug installs alongside release; without this they are two identical
+            // "Beam" icons and there is no way to tell which one you are testing.
+            resValue("string", "app_name", "Beam (debug)")
         }
         release {
+            resValue("string", "app_name", "Beam")
             signingConfig = if (hasSigningConfig) {
                 signingConfigs.getByName("release")
             } else {
@@ -65,6 +69,8 @@ android {
     buildFeatures {
         compose = true
         buildConfig = true
+        // Needed for the per-build-type app_name below; AGP 9 gates resValue behind this.
+        resValues = true
     }
 
     compileOptions {
