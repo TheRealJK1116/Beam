@@ -42,6 +42,18 @@ class BeamContainer(private val context: Context) {
     private val _settingsSnapshot = MutableStateFlow(SettingsState())
     val settingsSnapshot: StateFlow<SettingsState> get() = _settingsSnapshot
 
+    /**
+     * Seeded with every registered backend rather than left empty.
+     *
+     * A tap on a closed phone is answered from a cold process, before the availability probe
+     * has had a chance to run - which is precisely when this is read. Starting empty meant
+     * that tap fell back to a hardcoded Nearby and silently gave up Wi-Fi Direct, so the
+     * beam most likely to need the good path got the one that needs Play Services and
+     * produces a Bluetooth pairing dialog.
+     *
+     * Over-offering is the safe direction: the sender negotiates, and if a backend turns out
+     * not to work the transport fallback moves on to the next.
+     */
     private val _availableTransports = MutableStateFlow<List<TransportId>>(emptyList())
     val availableTransports: StateFlow<List<TransportId>> get() = _availableTransports
 
@@ -67,6 +79,18 @@ class BeamContainer(private val context: Context) {
             BeamDebug.extraTransports(context)?.let(::addAll)
         }
     )
+
+    /**
+     * The backends worth offering before anything has been probed.
+     *
+     * Not `registry.ids`: in a debug build that also contains the simulator, which must never
+     * be advertised to another phone - it is a loopback no other device can reach.
+     */
+    private val realTransportIds: List<TransportId> = listOf(wifiDirect.id, nearby.id)
+
+    init {
+        _availableTransports.value = realTransportIds
+    }
 
     val payloadSource = AndroidPayloadSource(context)
     val payloadSink = AndroidPayloadSink(context) { database.partials() }
@@ -151,12 +175,8 @@ class BeamContainer(private val context: Context) {
             return null
         }
 
-        val transports = _availableTransports.value.ifEmpty {
-            // Nothing probed yet (cold process, first tap after boot). Nearby is the backend we
-            // ship enabled, so offer it and let the connection attempt be the real test rather
-            // than refusing a tap the user made on purpose.
-            listOf(TransportId.NEARBY)
-        }
+        // Nothing probed yet means a cold process, not an absence of transports.
+        val transports = _availableTransports.value.ifEmpty { realTransportIds }
 
         return SessionToken.mint(
             device = localDevice(),
