@@ -1,6 +1,7 @@
 package dev.beam.transport.nearby
 
 import android.content.Context
+import android.util.Log
 import com.google.android.gms.common.ConnectionResult
 import com.google.android.gms.common.GoogleApiAvailability
 import com.google.android.gms.nearby.Nearby
@@ -86,13 +87,24 @@ class NearbyTransport(
         val session = ReceiveSession(this, token, sink, decide, client, timeouts)
         trySend(TransferEvent.Discovering)
 
-        val started = runCatching {
-            client.startAdvertising(
-                token.advertisingName,
-                SERVICE_ID,
-                session.connectionCallback,
-                advertisingOptions(),
-            ).await()
+        suspend fun advertise() = client.startAdvertising(
+            token.advertisingName,
+            SERVICE_ID,
+            session.connectionCallback,
+            advertisingOptions(),
+        ).await()
+
+        val started = runCatching { advertise() }.recoverCatching { failure ->
+            // An advertisement left running by an earlier session - a process that died
+            // mid-beam, say - makes Play Services refuse the new one outright. Clear it and
+            // try once more rather than leaving the user permanently unable to receive.
+            if (NearbyErrors.statusCodeOf(failure) == ConnectionsStatusCodes.STATUS_ALREADY_ADVERTISING) {
+                Log.w(NearbyErrors.TAG, "Stale advertisement found; stopping it and retrying")
+                client.stopAdvertising()
+                advertise()
+            } else {
+                throw failure
+            }
         }
         if (started.isFailure) {
             trySend(

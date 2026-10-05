@@ -114,10 +114,23 @@ class TransferCoordinator(
         _state.value = HandshakeReducer.reduce(_state.value, HandshakeEvent.Cancelled)
     }
 
-    /** Clears a finished beam so the UI returns to its resting state. */
+    /**
+     * Clears a finished beam so the next one does not inherit its outcome.
+     *
+     * The state is a single flow at application scope, which is what lets a transfer outlive
+     * the screen that started it - but it also means a completed beam sits in `Complete`
+     * forever. A send screen opened afterwards read that as its own result, showed "Sent" and
+     * closed itself immediately; worse, the foreground service that guards a send saw the same
+     * stale terminal state and stopped itself on the spot, so backgrounding killed the
+     * transfer.
+     */
     fun reset() {
         if (_state.value.isTerminal) _state.value = HandshakeState.Idle
     }
+
+    /** True once a beam has begun and before it has finished. */
+    val hasActiveTransfer: Boolean
+        get() = _state.value.let { it !is HandshakeState.Idle && !it.isTerminal }
 
     /**
      * Sender: try each shared transport in turn.

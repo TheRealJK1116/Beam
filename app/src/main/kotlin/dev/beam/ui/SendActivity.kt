@@ -44,6 +44,8 @@ import dev.beam.BeamPermissions
 import dev.beam.R
 import dev.beam.core.model.BeamPayload
 import dev.beam.core.session.HandshakeState
+import dev.beam.core.session.Role
+import dev.beam.core.session.belongsTo
 import dev.beam.feature.nfc.BeamReaderController
 import dev.beam.feature.nfc.TapResult
 import dev.beam.ui.components.BeamBlob
@@ -84,6 +86,10 @@ class SendActivity : ComponentActivity() {
         enableEdgeToEdge()
         reader = BeamReaderController(this)
 
+        // A completed beam stays in the shared state until something clears it; without this
+        // the screen opens showing the last transfer's result and closes itself.
+        container.coordinator.reset()
+
         resolvePayload(intent)
 
         setContent {
@@ -94,7 +100,8 @@ class SendActivity : ComponentActivity() {
                 val isReady by ready.collectAsStateWithLifecycle()
 
                 SendScreen(
-                    state = state,
+                    // A receive running in the background is not this screen's business.
+                    state = state.takeIf { it.belongsTo(Role.SENDER) } ?: HandshakeState.Idle,
                     payload = current,
                     nothingToSend = failed,
                     nfcEnabled = reader.isNfcEnabled,

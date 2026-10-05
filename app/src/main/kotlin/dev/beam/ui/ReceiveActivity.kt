@@ -35,6 +35,8 @@ import dev.beam.BeamApplication
 import dev.beam.R
 import dev.beam.TransferCoordinator
 import dev.beam.core.session.HandshakeState
+import dev.beam.core.session.Role
+import dev.beam.core.session.belongsTo
 import dev.beam.ui.components.BeamBlob
 import dev.beam.ui.components.BeamShape
 import dev.beam.ui.theme.BeamTheme
@@ -62,7 +64,7 @@ class ReceiveActivity : ComponentActivity() {
                 val pending by container.coordinator.pendingDecision.collectAsStateWithLifecycle()
 
                 ReceiveScreen(
-                    state = state,
+                    state = state.takeIf { it.belongsTo(Role.RECEIVER) } ?: HandshakeState.Idle,
                     pending = pending,
                     onAccept = { pending?.accept() },
                     onDecline = {

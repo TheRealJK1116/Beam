@@ -219,6 +219,16 @@ object HandshakeReducer {
     }
 }
 
+/**
+ * Whether this state describes a beam in [role]'s direction.
+ *
+ * The coordinator holds one state for the whole app so a transfer can outlive the screen that
+ * started it. The cost is that a send screen can be looking at a receive in progress, or at
+ * the leftover result of one; this is how each screen tells "mine" from "someone else's".
+ */
+fun HandshakeState.belongsTo(role: Role): Boolean =
+    this !is HandshakeState.Idle && this.role() == role
+
 private fun HandshakeState.role(): Role = when (this) {
     is HandshakeState.AwaitingTap -> role
     is HandshakeState.TokenAcquired -> role

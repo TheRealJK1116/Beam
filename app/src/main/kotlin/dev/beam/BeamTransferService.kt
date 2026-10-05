@@ -153,7 +153,16 @@ class BeamTransferService : Service() {
             }
         }
         scope.launch {
+            // A terminal state seen before any active one belongs to the *previous* beam:
+            // the service starts fractionally before the transfer it is guarding begins, and
+            // acting on that leftover made it stop itself immediately - which is how a
+            // backgrounded send lost its foreground service and died.
+            var sawActive = false
+
             container.coordinator.state.collectLatest { state ->
+                if (!state.isTerminal && state !is HandshakeState.Idle) sawActive = true
+                if (state.isTerminal && !sawActive) return@collectLatest
+
                 when (state) {
                     is HandshakeState.Transferring -> notify(transferNotification(state))
                     is HandshakeState.Complete -> {
