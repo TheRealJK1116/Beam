@@ -54,6 +54,13 @@
     <string name="send_text_hint">Type or paste something to beam</string>
     <string name="action_paste">Paste from clipboard</string>
     <string name="progress_file_of">%1$d of %2$d</string>
+
+    <!-- Permissions -->
+    <string name="perm_title">Beam needs a couple of permissions</string>
+    <string name="perm_body">Nearby devices, so two phones can find each other, and local network, so the files can cross directly between them. Beam has no internet access and no account — nothing leaves the two phones.</string>
+    <string name="perm_denied_body">Beam cannot send or receive without the nearby devices and local network permissions. You can turn them on in Settings.</string>
+    <string name="perm_location_title">Turn on Location</string>
+    <string name="perm_location_body">On Android 12, finding a nearby phone requires Location to be switched on. Beam never records or shares where you are.</string>
     <string name="action_send">Send</string>
     <string name="action_grant">Grant permissions</string>
     <string name="action_open_settings">Open settings</string>

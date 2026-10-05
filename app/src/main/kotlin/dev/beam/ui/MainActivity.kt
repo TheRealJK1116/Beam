@@ -51,6 +51,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
@@ -92,14 +93,23 @@ class MainActivity : ComponentActivity() {
         setContent {
             BeamTheme {
                 val navController = rememberNavController()
-                val permissions = rememberBeamPermissions()
+                val permissions = rememberPermissionUiState()
 
-                LaunchedEffect(Unit) { permissions.requestIfNeeded() }
+                // Ask once on first launch so the common case needs no thought; if anything
+                // is still missing afterwards the banner explains and offers a way back.
+                var askedOnce by rememberSaveable { mutableStateOf(false) }
+                LaunchedEffect(Unit) {
+                    if (!askedOnce) {
+                        askedOnce = true
+                        if (!permissions.ready) permissions.act()
+                    }
+                }
 
                 NavHost(navController, startDestination = "home") {
                     composable("home") {
                         HomeScreen(
                             container = container,
+                            permissions = permissions,
                             onOpenSettings = { navController.navigate("settings") },
                         )
                     }
@@ -124,35 +134,15 @@ class MainActivity : ComponentActivity() {
 
 // ------------------------------------------------------------------ permissions
 
-/**
- * Asks for whatever is still missing, once, when the home screen opens. The real enforcement
- * lives in [dev.beam.BeamPermissions] and is re-checked by every entry point, because the
- * share sheet and the NFC receive path can both run without this screen ever being seen.
- */
-@Composable
-private fun rememberBeamPermissions(): PermissionRequester {
-    val context = LocalContext.current
-    val launcher = rememberLauncherForActivityResult(
-        ActivityResultContracts.RequestMultiplePermissions()
-    ) { }
-
-    return remember(context) {
-        PermissionRequester {
-            val missing = BeamPermissions.missingRequestable(context)
-            if (missing.isNotEmpty()) launcher.launch(missing.toTypedArray())
-        }
-    }
-}
-
-private fun interface PermissionRequester {
-    fun requestIfNeeded()
-}
-
 // ------------------------------------------------------------------------ home
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun HomeScreen(container: BeamContainer, onOpenSettings: () -> Unit) {
+private fun HomeScreen(
+    container: BeamContainer,
+    permissions: PermissionUiState,
+    onOpenSettings: () -> Unit,
+) {
     val history by remember { container.database.transfers().recent() }
         .collectAsState(initial = emptyList())
     val context = LocalContext.current
@@ -208,18 +198,20 @@ private fun HomeScreen(container: BeamContainer, onOpenSettings: () -> Unit) {
             )
         }
 
-        if (history.isEmpty()) {
-            EmptyHistory(Modifier.padding(insets))
-        } else {
-            LazyColumn(
-                contentPadding = PaddingValues(
-                    top = insets.calculateTopPadding() + 8.dp,
-                    bottom = insets.calculateBottomPadding() + 24.dp,
-                    start = 16.dp,
-                    end = 16.dp,
-                ),
-                verticalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
+        LazyColumn(
+            contentPadding = PaddingValues(
+                top = insets.calculateTopPadding() + 8.dp,
+                bottom = insets.calculateBottomPadding() + 96.dp,
+                start = 16.dp,
+                end = 16.dp,
+            ),
+            verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+            item { PermissionBanner(permissions) }
+
+            if (history.isEmpty()) {
+                item { EmptyHistory(Modifier.height(320.dp)) }
+            } else {
                 items(history, key = { it.id }) { record -> HistoryRow(record) }
             }
         }
@@ -229,7 +221,7 @@ private fun HomeScreen(container: BeamContainer, onOpenSettings: () -> Unit) {
 @Composable
 private fun EmptyHistory(modifier: Modifier = Modifier) {
     Column(
-        modifier = modifier.fillMaxSize().padding(32.dp),
+        modifier = modifier.fillMaxWidth().padding(32.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.Center,
     ) {
