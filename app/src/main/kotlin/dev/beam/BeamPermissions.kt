@@ -78,16 +78,30 @@ object BeamPermissions {
     }.filter { isGrantable(context, it) }
 
     /**
-     * Whether this device's platform defines [permission] at all.
+     * Whether this install actually asks for [permission].
      *
-     * Requiring one it has never heard of is a gate that cannot open: the check reports it
-     * denied, requesting it returns denied without showing the user anything, and the app sits
-     * insisting on something nobody can give it. An SDK check is the real guard — this is the
-     * backstop, so that the next platform to move a permission around costs Beam a capability
-     * rather than the whole app.
+     * A permission the package does not declare can never be granted, so requiring one is a
+     * gate that cannot open: the check reports it denied, requesting it returns denied without
+     * showing the user anything, and the app sits insisting on something nobody can give it.
+     * This also covers the `maxSdkVersion` permissions, which drop out of the install above
+     * the version they are declared for.
+     *
+     * Asking the package what it requested, rather than asking the platform what it defines.
+     * The first version of this did the latter, which fails open in the worst way: one
+     * unexpected NameNotFoundException and *every* permission looks ungrantable, so Beam
+     * decides it needs none at all and goes cheerfully on to fail at the tap. Hence the
+     * default of true — when this cannot be answered, requiring too much is the safe side of
+     * the mistake, because it produces a visible banner rather than a silent lie.
      */
-    private fun isGrantable(context: Context, permission: String): Boolean =
-        runCatching { context.packageManager.getPermissionInfo(permission, 0) }.isSuccess
+    private fun isGrantable(context: Context, permission: String): Boolean {
+        val declared = runCatching {
+            context.packageManager
+                .getPackageInfo(context.packageName, PackageManager.GET_PERMISSIONS)
+                .requestedPermissions
+        }.getOrNull() ?: return true
+
+        return permission in declared
+    }
 
     fun missingForTransfer(context: Context): List<String> =
         requiredForTransfer(context).filter { !isGranted(context, it) }
