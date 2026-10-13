@@ -268,21 +268,36 @@ class BeamTransferService : Service() {
             this, 0, intent, PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
         )
 
-        notify(
-            NotificationCompat.Builder(this, CHANNEL_INCOMING)
-                .setSmallIcon(R.drawable.ic_beam_notification)
-                .setContentTitle(getString(R.string.notif_offer_title, peerName))
-                .setContentText(what)
-                .setPriority(NotificationCompat.PRIORITY_HIGH)
-                .setCategory(NotificationCompat.CATEGORY_CALL)
-                .setFullScreenIntent(pending, true)
-                .setContentIntent(pending)
-                .setAutoCancel(true)
-                .build()
-        )
+        val builder = NotificationCompat.Builder(this, CHANNEL_INCOMING)
+            .setSmallIcon(R.drawable.ic_beam_notification)
+            .setContentTitle(getString(R.string.notif_offer_title, peerName))
+            .setContentText(what)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .setCategory(NotificationCompat.CATEGORY_CALL)
+            .setContentIntent(pending)
+            .setAutoCancel(true)
 
-        startActivity(intent)
+        // Only worth attaching when the system will honour it. From Android 14 this is a
+        // special access that Beam is not granted by default, and an unhonoured full-screen
+        // intent is not an error - the notification simply arrives as a heads-up banner
+        // instead. Saying so in the log beats wondering why the lock screen stayed dark.
+        if (canUseFullScreenIntent()) {
+            builder.setFullScreenIntent(pending, true)
+        } else {
+            android.util.Log.i(TAG, "No full-screen intent access; the offer will arrive as a notification")
+        }
+
+        notify(builder.build())
+
+        // Only reaches the screen when Beam is already in the foreground: a background launch
+        // is blocked, which is exactly what the full-screen intent above exists to cover.
+        runCatching { startActivity(intent) }
     }
+
+    /** Granted to everyone before Android 14, and to calling and alarm apps after it. */
+    private fun canUseFullScreenIntent(): Boolean =
+        Build.VERSION.SDK_INT < Build.VERSION_CODES.UPSIDE_DOWN_CAKE ||
+            getSystemService(NotificationManager::class.java)?.canUseFullScreenIntent() == true
 
     private fun notifyResult(title: String, text: String) {
         notify(
@@ -347,7 +362,11 @@ class BeamTransferService : Service() {
         fun startReceiving(context: Context, token: SessionToken) {
             val intent = Intent(context, BeamTransferService::class.java)
                 .putExtra(EXTRA_TOKEN, SessionTokenCodec.encode(token))
-            context.startForegroundService(intent)
+            // This runs on the HCE binder thread while the phones are touching. A system that
+            // refuses the start - which the stricter OEM builds do - would otherwise throw
+            // straight into the NFC service rather than just losing the beam.
+            runCatching { context.startForegroundService(intent) }
+                .onFailure { android.util.Log.w(TAG, "Could not start the receive service", it) }
         }
 
         /**

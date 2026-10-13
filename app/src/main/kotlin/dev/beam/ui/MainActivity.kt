@@ -208,6 +208,7 @@ private fun HomeScreen(
             ),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            item { DeclinedTapBanner(container.declinedTaps) }
             item { PermissionBanner(permissions) }
 
             if (history.isEmpty()) {

@@ -18,10 +18,13 @@
     <!--
       Nearby Connections' radio permissions.
 
-      BLUETOOTH_SCAN carries usesPermissionFlags="neverForLocation", which is what lets Beam
-      ask for no location permission at all. Without the flag, Nearby refuses to scan unless
-      the app holds ACCESS_COARSE_LOCATION (status 8034) - a permission Beam has no business
-      requesting to move a file between two phones that are touching.
+      BLUETOOTH_SCAN carries usesPermissionFlags="neverForLocation". Without the flag, Nearby
+      refuses to scan unless the app holds ACCESS_COARSE_LOCATION (status 8034) - a permission
+      Beam has no business requesting to move a file between two phones that are touching.
+
+      On Android 13 and up that means no location permission at all. Android 12 has no
+      equivalent and still routes Wi-Fi scanning through location, so there the two permissions
+      below are requested; this comment used to claim otherwise.
     -->
     <uses-permission
         android:name="android.permission.BLUETOOTH_ADVERTISE"
@@ -85,6 +88,17 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CONNECTED_DEVICE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
+    <!--
+      Puts the accept screen in front of someone whose phone was locked and in their hand.
+
+      A tap is as deliberate as answering a call and just as short-lived, which is the case
+      this is for. From Android 14 it is a special app access rather than an ordinary
+      permission, and it is granted by default only to calling and alarm apps, so Beam asks
+      for it and carries on without it: the fallback is an ordinary high-priority notification
+      the user taps. Without the declaration there is no toggle for them to find at all.
+    -->
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <!--
       Lets Beam ask to be exempted from battery optimisation.

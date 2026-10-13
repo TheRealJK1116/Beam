@@ -33,6 +33,7 @@ class BeamContainer(private val context: Context) {
 
     /** Readable synchronously, because a tap cannot wait for a flow. */
     val identity = DeviceIdentity(context)
+    val declinedTaps = DeclinedTaps(context)
     val database by lazy { HistoryDatabase.create(context) }
 
     /**
@@ -163,9 +164,11 @@ class BeamContainer(private val context: Context) {
         }
 
         // A service woken by a tap cannot show a permission dialog, so refusing here is the
-        // only honest option. The tap is not silently lost: BeamTransferService posts a
-        // notification telling the user to open Beam and grant them.
+        // only honest option. The tap must not be silently lost, which it was: the notification
+        // below needs POST_NOTIFICATIONS, and the user who has granted nothing is exactly the
+        // user who ends up here. So it is written down too, and the app owns up when opened.
         if (!BeamPermissions.isReady(context)) {
+            declinedTaps.record()
             android.util.Log.w(
                 TAG,
                 "Tap declined: not ready. missing=${BeamPermissions.missingForTransfer(context)} " +

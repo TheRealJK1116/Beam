@@ -25,6 +25,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
@@ -34,6 +35,7 @@ import androidx.core.app.ActivityCompat
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.Lifecycle
 import dev.beam.BeamPermissions
+import dev.beam.DeclinedTaps
 import dev.beam.R
 
 /**
@@ -53,6 +55,8 @@ class PermissionUiState(
     val ready: Boolean,
     val needsLocationService: Boolean,
     val canAskAgain: Boolean,
+    /** True when the user chose "Approximate" and needs telling that it will not do. */
+    val needsPreciseLocation: Boolean,
     /** True when the system may stop Beam running while it is not on screen. */
     val batteryRestricted: Boolean,
     private val onRequest: () -> Unit,
@@ -75,8 +79,10 @@ fun rememberPermissionUiState(): PermissionUiState {
     LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { refresh++ }
 
     // Set once the system dialog has been shown and dismissed, which is what distinguishes
-    // "not asked yet" from "refused".
-    var asked by remember { mutableStateOf(false) }
+    // "not asked yet" from "refused". Saved rather than merely remembered: a rotation or a
+    // trip through system settings would otherwise reset it to "never asked", and the banner
+    // would go back to offering a Grant button that the platform silently ignores.
+    var asked by rememberSaveable { mutableStateOf(false) }
 
     val launcher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
@@ -100,6 +106,7 @@ fun rememberPermissionUiState(): PermissionUiState {
             ready = BeamPermissions.isReady(context),
             needsLocationService = locationNeeded,
             canAskAgain = canAskAgain,
+            needsPreciseLocation = BeamPermissions.needsPreciseLocation(context),
             batteryRestricted = !BeamPermissions.isExemptFromBatteryOptimisation(context),
             onRequest = {
                 val stillMissing = BeamPermissions.missingRequestable(context)
@@ -147,6 +154,9 @@ fun PermissionBanner(state: PermissionUiState, modifier: Modifier = Modifier) {
                 stringResource(
                     when {
                         state.needsLocationService -> R.string.perm_location_body
+                        // Before the generic copy: this user has already granted something,
+                        // so being told "Beam needs permission" again just looks broken.
+                        state.needsPreciseLocation -> R.string.perm_precise_body
                         state.canAskAgain -> R.string.perm_body
                         else -> R.string.perm_denied_body
                     }
@@ -170,11 +180,51 @@ fun PermissionBanner(state: PermissionUiState, modifier: Modifier = Modifier) {
 }
 
 /**
+ * Owns up to a tap that was turned away while nobody was looking.
+ *
+ * The notification that was supposed to explain this needs a permission of its own, and the
+ * user who has granted nothing is precisely the one whose taps get declined — so without this
+ * the beam simply vanished, and the person who tapped got no answer and no reason.
+ */
+@Composable
+fun DeclinedTapBanner(declinedTaps: DeclinedTaps, modifier: Modifier = Modifier) {
+    var show by remember { mutableStateOf(declinedTaps.hasUnseen) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { show = declinedTaps.hasUnseen }
+    if (!show) return
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.errorContainer,
+        ),
+    ) {
+        Column(Modifier.padding(20.dp)) {
+            Text(
+                stringResource(R.string.declined_tap_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            Spacer(Modifier.height(6.dp))
+            Text(
+                stringResource(R.string.declined_tap_body),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onErrorContainer,
+            )
+            Spacer(Modifier.height(14.dp))
+            TextButton(onClick = { declinedTaps.markSeen(); show = false }) {
+                Text(stringResource(R.string.action_got_it))
+            }
+        }
+    }
+}
+
+/**
  * Shown once the permissions are in place but the system may still stop Beam running in the
  * background — which is when a tap on a closed phone goes unanswered.
  */
 @Composable
 private fun BackgroundBanner(state: PermissionUiState, modifier: Modifier = Modifier) {
+    val context = LocalContext.current
     Card(
         modifier = modifier.fillMaxWidth(),
         colors = CardDefaults.cardColors(
@@ -193,8 +243,20 @@ private fun BackgroundBanner(state: PermissionUiState, modifier: Modifier = Modi
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
             Spacer(Modifier.height(14.dp))
-            TextButton(onClick = state::allowBackground) {
-                Text(stringResource(R.string.action_allow_background))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                TextButton(onClick = state::allowBackground) {
+                    Text(stringResource(R.string.action_allow_background))
+                }
+                // One UI runs its own scheme on top of Android's. Being exempt from battery
+                // optimisation is not the same as being on Samsung's "never sleeping" list,
+                // and an app it has put to sleep is not there to answer a tap - so the
+                // battery button above can report success while taps still go unanswered.
+                // There is no API to read that state, only this list to send people to.
+                if (context.hasSamsungSleepSettings()) {
+                    TextButton(onClick = { context.openSamsungSleepingApps() }) {
+                        Text(stringResource(R.string.action_samsung_sleep))
+                    }
+                }
             }
         }
     }
@@ -217,6 +279,32 @@ private fun Context.requestBatteryExemption() {
 
     runCatching { startActivity(direct) }
         .recoverCatching { startActivity(fallback) }
+}
+
+/**
+ * Samsung's "never sleeping apps" list, which is a different thing from battery optimisation.
+ *
+ * Gated on the intent actually resolving rather than on the manufacturer string: a Galaxy with
+ * Device Care disabled should not be offered a button that goes nowhere, and some non-Samsung
+ * builds ship the same package.
+ */
+private const val SAMSUNG_SLEEP_ACTION = "com.samsung.android.sm.ACTION_OPEN_CHECKABLE_LISTACTIVITY"
+private const val SAMSUNG_SLEEP_PACKAGE = "com.samsung.android.lool"
+
+/** 2 selects the "never sleeping apps" tab; 0 and 1 are the sleeping and deep-sleeping lists. */
+private const val SAMSUNG_NEVER_SLEEPING = 2
+
+private fun samsungSleepIntent(): Intent =
+    Intent(SAMSUNG_SLEEP_ACTION)
+        .setPackage(SAMSUNG_SLEEP_PACKAGE)
+        .putExtra("activity_type", SAMSUNG_NEVER_SLEEPING)
+        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+private fun Context.hasSamsungSleepSettings(): Boolean =
+    samsungSleepIntent().resolveActivity(packageManager) != null
+
+private fun Context.openSamsungSleepingApps() {
+    runCatching { startActivity(samsungSleepIntent()) }
 }
 
 /** The app's own settings page, or the location toggle when that is what is missing. */

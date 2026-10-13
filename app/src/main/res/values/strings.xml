@@ -59,11 +59,16 @@
     <!-- Permissions -->
     <string name="perm_title">Beam needs a couple of permissions</string>
     <string name="perm_body">Nearby devices, so two phones can find each other, and local network, so the files can cross directly between them. Beam has no internet access and no account — nothing leaves the two phones.</string>
+    <string name="perm_precise_body">Choose Precise rather than Approximate. Beam does not use your location — the radio scan that finds the other phone is filed under the same permission, and the approximate option switches that scan off.</string>
     <string name="perm_denied_body">Beam cannot send or receive without the nearby devices and local network permissions. You can turn them on in Settings.</string>
     <string name="perm_location_title">Turn on Location</string>
     <string name="perm_location_body">On Android 12, finding a nearby phone requires Location to be switched on. Beam never records or shares where you are.</string>
+    <string name="declined_tap_title">A phone tapped yours and Beam had to say no</string>
+    <string name="declined_tap_body">It happened while Beam was closed, and without the permissions above there was no way to answer or to tell you at the time. Grant them and the next tap will work.</string>
+    <string name="action_got_it">Got it</string>
     <string name="perm_background_title">Let Beam receive while closed</string>
     <string name="perm_background_body">Beam answers a tap by waking up on its own, so the system has to be allowed to run it in the background. Without this, another phone tapping yours will only reach you while Beam is open on screen.</string>
+    <string name="action_samsung_sleep">Never-sleeping apps</string>
     <string name="action_allow_background">Allow background use</string>
     <string name="action_send">Send</string>
     <string name="action_grant">Grant permissions</string>
