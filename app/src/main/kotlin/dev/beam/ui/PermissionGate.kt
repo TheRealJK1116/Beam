@@ -35,6 +35,7 @@ import androidx.core.app.ActivityCompat
 import androidx.lifecycle.compose.LifecycleEventEffect
 import androidx.lifecycle.Lifecycle
 import dev.beam.BeamPermissions
+import dev.beam.BeamRadios
 import dev.beam.DeclinedTaps
 import dev.beam.R
 
@@ -177,6 +178,93 @@ fun PermissionBanner(state: PermissionUiState, modifier: Modifier = Modifier) {
             }
         }
     }
+}
+
+/**
+ * Lists the switches that are off, with a way to each one.
+ *
+ * Separate from [PermissionBanner] because it is a different kind of statement. That one says
+ * Beam is not allowed to work; this one says it is allowed and something else is in the way —
+ * and unlike a permission, these can be true of a perfectly healthy phone a moment before a
+ * beam. So this never blocks anything: it is the difference between a transfer that fails
+ * mysteriously once the phones are already touching and one that never needed to be tried.
+ */
+@Composable
+fun RadioBanner(modifier: Modifier = Modifier) {
+    val context = LocalContext.current
+    var off by remember { mutableStateOf(BeamRadios.off(context)) }
+    LifecycleEventEffect(Lifecycle.Event.ON_RESUME) { off = BeamRadios.off(context) }
+
+    // A phone with no NFC cannot beam in either direction, and no setting will fix it. Say so
+    // plainly rather than listing switches that are beside the point.
+    if (!BeamRadios.hasNfc(context)) {
+        Card(
+            modifier = modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = MaterialTheme.colorScheme.errorContainer,
+            ),
+        ) {
+            Column(Modifier.padding(20.dp)) {
+                Text(
+                    stringResource(R.string.radio_no_nfc_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    stringResource(R.string.radio_no_nfc_body),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
+        }
+        return
+    }
+
+    if (off.isEmpty()) return
+
+    Card(
+        modifier = modifier.fillMaxWidth(),
+        colors = CardDefaults.cardColors(
+            containerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
+        ),
+    ) {
+        Column(Modifier.padding(20.dp)) {
+            Text(
+                stringResource(R.string.radio_title),
+                style = MaterialTheme.typography.titleMedium,
+            )
+            off.forEach { radio ->
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    stringResource(radio.bodyRes()),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(
+                    onClick = {
+                        runCatching { context.startActivity(BeamRadios.settingsIntent(radio)) }
+                    }
+                ) {
+                    Text(stringResource(radio.actionRes()))
+                }
+            }
+        }
+    }
+}
+
+private fun BeamRadios.Radio.bodyRes(): Int = when (this) {
+    BeamRadios.Radio.NFC -> R.string.radio_nfc_body
+    BeamRadios.Radio.WIFI -> R.string.radio_wifi_body
+    BeamRadios.Radio.BLUETOOTH -> R.string.radio_bluetooth_body
+    BeamRadios.Radio.LOCATION -> R.string.radio_location_body
+}
+
+private fun BeamRadios.Radio.actionRes(): Int = when (this) {
+    BeamRadios.Radio.NFC -> R.string.radio_nfc_action
+    BeamRadios.Radio.WIFI -> R.string.radio_wifi_action
+    BeamRadios.Radio.BLUETOOTH -> R.string.radio_bluetooth_action
+    BeamRadios.Radio.LOCATION -> R.string.radio_location_action
 }
 
 /**

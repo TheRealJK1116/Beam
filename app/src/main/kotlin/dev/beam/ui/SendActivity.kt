@@ -70,6 +70,13 @@ class SendActivity : ComponentActivity() {
     private val ready = MutableStateFlow(false)
 
     /**
+     * Read as state rather than once at composition: turning NFC on is the obvious thing to do
+     * when this screen tells you it is off, and the screen has to notice when you come back
+     * having done it.
+     */
+    private val nfcOn = MutableStateFlow(false)
+
+    /**
      * The share sheet can launch this screen without Beam ever having been opened, so this is
      * the first and only chance to ask. Reader mode is not armed until we are ready - tapping
      * phones and then failing inside Nearby with a status code is the worst possible way to
@@ -85,6 +92,9 @@ class SendActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         reader = BeamReaderController(this)
+        // Seeded here as well as in onResume: the first composition happens before onResume,
+        // and starting from a default of "off" would flash the NFC warning at everyone.
+        nfcOn.value = reader.isNfcEnabled
 
         // A completed beam stays in the shared state until something clears it; without this
         // the screen opens showing the last transfer's result and closes itself.
@@ -98,13 +108,14 @@ class SendActivity : ComponentActivity() {
                 val current by payload.collectAsStateWithLifecycle()
                 val failed by resolveError.collectAsStateWithLifecycle()
                 val isReady by ready.collectAsStateWithLifecycle()
+                val isNfcOn by nfcOn.collectAsStateWithLifecycle()
 
                 SendScreen(
                     // A receive running in the background is not this screen's business.
                     state = state.takeIf { it.belongsTo(Role.SENDER) } ?: HandshakeState.Idle,
                     payload = current,
                     nothingToSend = failed,
-                    nfcEnabled = reader.isNfcEnabled,
+                    nfcEnabled = isNfcOn,
                     needsPermissions = !isReady,
                     locationOff = BeamPermissions.isLocationServiceRequired() &&
                         !BeamPermissions.isLocationServiceOn(this@SendActivity),
@@ -158,6 +169,7 @@ class SendActivity : ComponentActivity() {
         super.onResume()
         // They may have granted something in Settings and come back.
         ready.value = BeamPermissions.isReady(this)
+        nfcOn.value = reader.isNfcEnabled
     }
 
     /**

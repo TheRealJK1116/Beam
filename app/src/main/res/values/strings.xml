@@ -63,6 +63,17 @@
     <string name="perm_denied_body">Beam cannot send or receive without the nearby devices and local network permissions. You can turn them on in Settings.</string>
     <string name="perm_location_title">Turn on Location</string>
     <string name="perm_location_body">On Android 12, finding a nearby phone requires Location to be switched on. Beam never records or shares where you are.</string>
+    <string name="radio_title">Something is switched off</string>
+    <string name="radio_nfc_body">NFC is off, so nothing happens when two phones touch. Beam needs it at both ends.</string>
+    <string name="radio_nfc_action">Turn on NFC</string>
+    <string name="radio_wifi_body">Wi-Fi is off. The tap would still be felt, but the files cross over a direct Wi-Fi link between the two phones.</string>
+    <string name="radio_wifi_action">Turn on Wi-Fi</string>
+    <string name="radio_location_body">Location is off. Beam does not use your location, but some phones quietly refuse to find the other device without it.</string>
+    <string name="radio_location_action">Location settings</string>
+    <string name="radio_bluetooth_body">Bluetooth is off. Beam only falls back to it when the direct Wi-Fi link cannot be made, so this is the least urgent of these.</string>
+    <string name="radio_bluetooth_action">Bluetooth settings</string>
+    <string name="radio_no_nfc_title">This phone has no NFC</string>
+    <string name="radio_no_nfc_body">Beam works by two phones touching, so it cannot send or receive on this device. Nothing in Settings will change that.</string>
     <string name="declined_tap_title">A phone tapped yours and Beam had to say no</string>
     <string name="declined_tap_body">It happened while Beam was closed, and without the permissions above there was no way to answer or to tell you at the time. Grant them and the next tap will work.</string>
     <string name="action_got_it">Got it</string>

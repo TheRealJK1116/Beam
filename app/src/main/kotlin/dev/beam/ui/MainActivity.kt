@@ -210,6 +210,9 @@ private fun HomeScreen(
         ) {
             item { DeclinedTapBanner(container.declinedTaps) }
             item { PermissionBanner(permissions) }
+            // After the permission banner: being allowed to beam comes before the switches
+            // that beaming then needs.
+            item { RadioBanner() }
 
             if (history.isEmpty()) {
                 item { EmptyHistory(Modifier.height(320.dp)) }
