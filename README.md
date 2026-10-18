@@ -66,7 +66,7 @@ Requires JDK 21 (pinned in `gradle.properties`) and an Android SDK with platform
 
 ## Developer simulation
 
-Debug builds only, under Settings → Developer:
+Debug builds only (if you want one my dc is [here](https://discord.com/users/1217159751440269364)), under Settings → Developer:
 
 - **Simulate an incoming tap** — mints a real session and runs the real receive flow, so the
   foreground service, notification and confirmation screen can be exercised on one phone.
