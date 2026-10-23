@@ -68,6 +68,15 @@ val checkTransportBoundary by tasks.registering {
 subprojects {
     tasks.matching { it.name == "check" }.configureEach {
         dependsOn(checkTransportBoundary)
+
+        // Compile the release variant too. `check` runs the debug unit tests and lints the
+        // debug variant, so code that only release compiles - the stubs standing in for the
+        // debug-only simulator, above all - was never built until someone cut a release. A
+        // call added to shared UI against a debug-only function left check perfectly green
+        // and the release build broken, which is the worst moment to find out.
+        // Resolved lazily: at the point `check` is configured the Android plugin has not
+        // necessarily registered its per-variant compile tasks yet.
+        dependsOn(provider { tasks.filter { it.name == "compileReleaseKotlin" } })
     }
 
     // Robolectric reaches into FileDescriptor and ClassLoader internals to emulate the

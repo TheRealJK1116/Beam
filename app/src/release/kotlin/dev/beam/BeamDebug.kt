@@ -28,6 +28,9 @@ object BeamDebug {
 
     fun simulateIncomingTap(context: Context, container: BeamContainer): Boolean = false
 
+    suspend fun fabricateReceivedApk(context: Context, container: BeamContainer): String =
+        "unavailable in release builds"
+
     fun setSimulationEnabled(enabled: Boolean) = Unit
 
     fun armSendInterruption(bytes: Long) = Unit
