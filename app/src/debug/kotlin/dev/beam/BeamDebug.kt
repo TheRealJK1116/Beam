@@ -4,7 +4,9 @@ import android.content.Context
 import dev.beam.core.model.BeamPayload
 import dev.beam.core.model.DeviceInfo
 import dev.beam.core.model.TransferEvent
+import dev.beam.core.model.PayloadManifest
 import dev.beam.core.model.TransportId
+import dev.beam.data.history.TransferRecord
 import dev.beam.core.session.SessionToken
 import dev.beam.core.transport.Transport
 import dev.beam.transport.fake.FakeEther
@@ -200,6 +202,50 @@ object BeamDebug {
         val token = container.mintSessionForTap() ?: return false
         BeamTransferService.startReceiving(context, token)
         return true
+    }
+
+    /**
+     * Writes a real .apk into history as though it had just been received.
+     *
+     * Opening a received file can only be tested on a file that was genuinely received, and a
+     * beam needs two phones. This takes the same route a real one does — the real MediaStore
+     * sink, the real history table — so what lands is indistinguishable from the real thing
+     * and the Open button exercises the actual code path.
+     *
+     * It copies this very app's installed APK, so there is always something valid to hand to
+     * an installer rather than a file that merely ends in .apk.
+     */
+    suspend fun fabricateReceivedApk(context: Context, container: BeamContainer): String {
+        val ourApk = java.io.File(context.applicationInfo.sourceDir)
+        val entry = PayloadManifest.Entry(
+            name = "beam-sample.apk",
+            mimeType = "application/vnd.android.package-archive",
+            sizeBytes = ourApk.length(),
+        )
+
+        val destination = container.payloadSink.create(entry, peerStableId = "debug-fabricated")
+        destination.stream.use { out -> ourApk.inputStream().use { it.copyTo(out) } }
+        val uri = destination.commit()
+
+        container.database.transfers().insert(
+            TransferRecord(
+                outgoing = false,
+                label = "beam-sample.apk",
+                kind = "FILES",
+                sizeBytes = entry.sizeBytes,
+                peerStableId = "debug-fabricated",
+                peerName = "Fabricated",
+                transport = TransportId.FAKE,
+                completedAt = System.currentTimeMillis(),
+                durationMillis = 0,
+                primaryUri = uri,
+            )
+        )
+
+        // What MediaStore decided it is, which is what the Open button will act on. If this
+        // does not say package-archive, the receive side mangled the type on the way in.
+        val storedType = context.contentResolver.getType(android.net.Uri.parse(uri))
+        return "wrote $uri (${entry.sizeBytes} B), MediaStore calls it $storedType"
     }
 }
 

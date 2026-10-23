@@ -109,6 +109,24 @@ fun DevScreen(container: BeamContainer, onBack: () -> Unit) {
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
 
+            FilledTonalButton(
+                onClick = {
+                    scope.launch {
+                        runCatching { BeamDebug.fabricateReceivedApk(context, container) }
+                            .onSuccess { log.add("apk: $it") }
+                            .onFailure { log.add("apk FAILED: ${it.message}") }
+                    }
+                },
+                modifier = Modifier.fillMaxWidth(),
+            ) { Text("Put a received APK in history") }
+
+            Text(
+                "Writes this app's own APK through the real MediaStore sink and files it in " +
+                    "history, so the Open button can be tried without a second phone.",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
             Spacer(Modifier.height(8.dp))
             Text("Shape preview", style = MaterialTheme.typography.titleMedium)
             Text(
