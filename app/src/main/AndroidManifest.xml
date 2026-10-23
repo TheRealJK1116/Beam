@@ -110,6 +110,19 @@
     -->
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
 
+    <!--
+      Lets a received .apk be opened, which means handing it to the system installer.
+
+      Beam does not install anything itself and has no privilege to: this permission only makes
+      Beam an eligible *source*, and the user still has to allow it per-source in settings and
+      then confirm the install itself. Without it a beamed app is a file you cannot open, which
+      is a strange thing for a file-transfer app to be.
+
+      Worth knowing before publishing: Play treats this as a sensitive permission and asks apps
+      that declare it to justify it.
+    -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <uses-feature
         android:name="android.hardware.nfc"
         android:required="false" />

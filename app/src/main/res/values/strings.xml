@@ -28,6 +28,7 @@
     <string name="receive_done_subtitle">Saved to your Beam folder</string>
 
     <!-- Home and settings -->
+    <string name="history_cannot_install">Beam cannot install apps on this phone. The setting that allows it is not available here.</string>
     <string name="history_cannot_open">Nothing on this phone can open that file</string>
     <string name="home_empty_title">Nothing beamed yet</string>
     <string name="home_empty_subtitle">Tap Send, or share something and pick Beam — then touch two phones together.</string>
