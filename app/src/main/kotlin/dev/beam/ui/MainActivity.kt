@@ -6,7 +6,6 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
-import android.provider.Settings
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
@@ -385,13 +384,11 @@ private fun Context.openReceived(record: TransferRecord) {
     val uri = record.primaryUri?.takeIf { it.isNotBlank() }?.let(Uri::parse) ?: return
     val type = ReceivedFile.mimeType(contentResolver, uri, record.label)
 
-    // Installing is not opening: the installer has to be allowed to act on this app's behalf,
-    // and the permission for that is one the user grants per-source in system settings.
-    if (type == ReceivedFile.APK_MIME && !canInstallApks()) {
-        requestInstallPermission()
-        return
-    }
-
+    // No check for install permission before an APK, deliberately. Opening one is not the same
+    // as installing it - a file manager or an inspector will happily show you what is inside,
+    // and none of those need Beam to be an allowed install source. Gating on it would refuse
+    // to open a file that three apps on the phone can open. If the installer is what you pick,
+    // the system asks for what it needs at that point, in its own words.
     val intent = Intent(Intent.ACTION_VIEW)
         .setDataAndType(uri, type)
         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
@@ -403,20 +400,6 @@ private fun Context.openReceived(record: TransferRecord) {
         }
 }
 
-/** Granted per-source, and revocable, so it is checked at the moment of use rather than cached. */
-private fun Context.canInstallApks(): Boolean = packageManager.canRequestPackageInstalls()
-
-private fun Context.requestInstallPermission() {
-    val intent = Intent(
-        Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-        Uri.fromParts("package", packageName, null),
-    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-
-    runCatching { startActivity(intent) }
-        .onFailure {
-            Toast.makeText(this, getString(R.string.history_cannot_install), Toast.LENGTH_LONG).show()
-        }
-}
 
 /** A folder travels as its tree URI; SendActivity walks it off the main thread. */
 private fun Context.startBeamFolder(tree: Uri) {
